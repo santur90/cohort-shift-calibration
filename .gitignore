@@ -1,0 +1,9 @@
+# Public cohort data are downloaded locally and must never be committed.
+data/
+
+__pycache__/
+.pytest_cache/
+.venv/
+*.egg-info/
+build/
+dist/

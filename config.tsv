@@ -1,0 +1,3 @@
+cohort	study_id	rna_file
+beat_aml	aml_ohsu_2022	data_mrna_seq_rpkm.txt
+tcga_laml	laml_tcga_pan_can_atlas_2018	data_mrna_seq_v2_rsem.txt
