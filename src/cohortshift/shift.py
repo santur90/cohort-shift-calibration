@@ -15,7 +15,7 @@ from sklearn.preprocessing import StandardScaler
 
 from .features import cohort_standardize, within_sample_rank
 
-E0_METHODS = ("none", "A1", "A2", "A3")
+E0_METHODS = ("A0", "A0+A1", "A0+A3", "none", "A1", "A2", "A3")
 A3_WEIGHT_CLIP = (0.1, 10.0)
 
 
@@ -37,17 +37,32 @@ def _require_complete_expression(
         )
 
 
+def target_expression_a0(values: pd.DataFrame) -> pd.DataFrame:
+    """Apply the registered deterministic A0 transform to target expression."""
+    transformed = np.log2(np.maximum(values.to_numpy(dtype=float), 0.0) + 1.0)
+    return pd.DataFrame(transformed, index=values.index, columns=values.columns)
+
+
 def _adapt_domain_features(
     source: pd.DataFrame, target: pd.DataFrame, method: str
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     if method == "none" or method == "A3":
         return source.copy(), target.copy()
+    if method == "A0":
+        return source.copy(), target_expression_a0(target)
     if method == "A1":
         source_scaled, _, _ = cohort_standardize(source)
         target_scaled, _, _ = cohort_standardize(target)
         return source_scaled, target_scaled
     if method == "A2":
         return within_sample_rank(source), within_sample_rank(target)
+    if method == "A0+A1":
+        target_a0 = target_expression_a0(target)
+        source_scaled, _, _ = cohort_standardize(source)
+        target_scaled, _, _ = cohort_standardize(target_a0)
+        return source_scaled, target_scaled
+    if method == "A0+A3":
+        return source.copy(), target_expression_a0(target)
     raise ValueError(f"Unknown E0 adaptation method: {method}")
 
 
@@ -138,7 +153,9 @@ def domain_classifier_auroc(
     fold, then applied to that fold's held-out samples.
     """
     _require_complete_expression(source, target)
-    if method == "A1":
+    if method in {"A1", "A0+A1"}:
+        if method == "A0+A1":
+            target = target_expression_a0(target)
         features = np.vstack(
             (source.to_numpy(dtype=float), target.to_numpy(dtype=float))
         )
@@ -165,9 +182,9 @@ def domain_classifier_auroc(
 
 
 def _whole_data_standardized_domain_auroc(
-    source: pd.DataFrame, target: pd.DataFrame, *, seed: int
+    source: pd.DataFrame, target: pd.DataFrame, *, method: str, seed: int
 ) -> float:
-    source_scaled, target_scaled = _adapt_domain_features(source, target, "A1")
+    source_scaled, target_scaled = _adapt_domain_features(source, target, method)
     features = np.vstack(
         (source_scaled.to_numpy(dtype=float), target_scaled.to_numpy(dtype=float))
     )
@@ -215,7 +232,7 @@ def per_gene_ks(
     """Return one two-sample KS statistic per gene after the requested transform."""
     source, target = _adapt_domain_features(source, target, method)
     source_weights = pd.Series(1.0, index=source.index)
-    if method == "A3":
+    if method in {"A3", "A0+A3"}:
         _require_complete_expression(source, target)
         combined = np.vstack((source.to_numpy(), target.to_numpy()))
         domain = np.r_[np.zeros(len(source), dtype=int), np.ones(len(target), dtype=int)]
@@ -236,7 +253,11 @@ def per_gene_ks(
             "ks_statistic": np.nan,
             "p_value": np.nan,
         }
-        if len(source_values) and len(target_values) and method == "A3":
+        if (
+            len(source_values)
+            and len(target_values)
+            and method in {"A3", "A0+A3"}
+        ):
             result_row["ks_statistic"] = _weighted_ks(
                 source_values,
                 target_values,
@@ -330,6 +351,11 @@ def run_e0_shift(
         summary_rows.append(
             {
                 "method": method,
+                "expression_scale": (
+                    "target A0: log2(max(x, 0) + 1)"
+                    if method in {"A0", "A0+A1", "A0+A3"}
+                    else "raw units"
+                ),
                 "expression_units": (
                     "Beat AML: log2 RPKM; TCGA-LAML: batch-corrected RSEM"
                 ),
@@ -343,20 +369,23 @@ def run_e0_shift(
                 ),
                 "domain_classifier_auroc_whole_data_standardized": (
                     _whole_data_standardized_domain_auroc(
-                        source, target, seed=seed
+                        source,
+                        target,
+                        method=method,
+                        seed=seed,
                     )
-                    if method == "A1"
+                    if method in {"A1", "A0+A1"}
                     else np.nan
                 ),
                 "domain_classifier_auroc_note": (
                     "unweighted; unchanged by construction (A3 weights are used "
                     "for weighted KS only)"
-                    if method == "A3"
+                    if method in {"A3", "A0+A3"}
                     else (
                         "whole-data per-cohort standardization forces equal class "
                         "means and biases CV AUROC below 0.5; retained separately "
                         "for comparison"
-                        if method == "A1"
+                        if method in {"A1", "A0+A1"}
                         else "unweighted"
                     )
                 ),
@@ -367,9 +396,14 @@ def run_e0_shift(
                 "max_gene_ks": float(stats.max()) if stats.notna().any() else np.nan,
             }
         )
-        if method == "A3":
+        if method in {"A3", "A0+A3"}:
+            weight_source, weight_target = _adapt_domain_features(
+                source, target, method
+            )
             a3_weights = domain_classifier_weights(
-                source.to_numpy(), target.to_numpy(), clip=A3_WEIGHT_CLIP
+                weight_source.to_numpy(),
+                weight_target.to_numpy(),
+                clip=A3_WEIGHT_CLIP,
             )
             effective_sample_size = float(
                 np.square(a3_weights.sum()) / np.square(a3_weights).sum()

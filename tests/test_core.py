@@ -34,10 +34,12 @@ from cohortshift.labels import (
     mutation_labels,
 )
 from cohortshift.shift import (
+    E0_METHODS,
     domain_classifier_auroc,
     domain_classifier_weights,
     per_gene_ks,
     run_e0_shift,
+    target_expression_a0,
 )
 
 
@@ -580,6 +582,45 @@ def test_a1_cv_uses_fold_local_standardization_and_preserves_old_metric(tmp_path
     assert np.isfinite(row["domain_classifier_auroc_cv"])
     assert np.isfinite(row["domain_classifier_auroc_whole_data_standardized"])
     assert "forces equal class means" in row["domain_classifier_auroc_note"]
+
+
+def test_a0_is_deterministic_label_free_and_handles_negative_values():
+    target = pd.DataFrame(
+        {"gene": [-0.5, 0.0, 3.0]},
+        index=["negative", "zero", "positive"],
+    )
+    original = target.copy(deep=True)
+
+    first = target_expression_a0(target)
+    second = target_expression_a0(target)
+
+    pd.testing.assert_frame_equal(first, second)
+    pd.testing.assert_frame_equal(target, original)
+    assert first["gene"].tolist() == pytest.approx([0.0, 0.0, 2.0])
+    assert np.isfinite(first.to_numpy()).all()
+    assert list(inspect.signature(target_expression_a0).parameters) == ["values"]
+
+
+def test_e0_includes_a0_and_composite_rows_and_keeps_raw_rows(tmp_path):
+    rng = np.random.default_rng(2026)
+    source = pd.DataFrame(rng.normal(size=(40, 4)), columns=list("abcd"))
+    target = pd.DataFrame(rng.normal(loc=1.5, size=(40, 4)), columns=list("abcd"))
+    summary, gene_ks = run_e0_shift(
+        source,
+        target,
+        seed=7,
+        pca_output_dir=str(tmp_path),
+    )
+    assert tuple(summary["method"]) == E0_METHODS
+    assert set(summary["expression_scale"]) == {
+        "raw units",
+        "target A0: log2(max(x, 0) + 1)",
+    }
+    assert set(gene_ks["method"]) == set(E0_METHODS)
+    assert gene_ks.loc[gene_ks["method"] == "A0+A3", "p_value"].isna().all()
+    for method in E0_METHODS:
+        assert (tmp_path / f"e0_pca_{method}.png").is_file()
+    assert summary.loc[summary["method"] == "A0+A3", "degenerate_flag"].notna().all()
 
 
 def test_conformal_quantile_and_prediction_sets():
