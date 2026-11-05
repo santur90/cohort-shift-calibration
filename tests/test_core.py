@@ -4,6 +4,7 @@ from io import StringIO
 import numpy as np
 import pandas as pd
 import pytest
+from scipy.special import expit
 
 from cohortshift.adapt import adapt_features, adaptation_weights
 from cohortshift.conformal import conformal_quantile, prediction_sets
@@ -43,6 +44,7 @@ from cohortshift.shift import (
     target_expression_a0,
 )
 from cohortshift.source_experiments import (
+    _fit_calibrator,
     expected_calibration_error,
     run_source_experiments,
     select_repeat_genes,
@@ -699,10 +701,38 @@ def test_source_experiment_tables_are_bit_identical_for_same_seed():
     patient_by_sample = {sample: f"patient-{index:03d}" for index, sample in enumerate(sample_ids)}
 
     first = run_source_experiments(
-        expression, labels, patient_by_sample, seeds=(7201,), n_genes=6
+        expression,
+        labels,
+        patient_by_sample,
+        seeds=(7201,),
+        n_genes=6,
+        registered_main_split={
+            sample: (
+                "train"
+                if index < 42
+                else "validation"
+                if index < 56
+                else "test"
+            )
+            for index, sample in enumerate(sample_ids)
+        },
     )
     second = run_source_experiments(
-        expression, labels, patient_by_sample, seeds=(7201,), n_genes=6
+        expression,
+        labels,
+        patient_by_sample,
+        seeds=(7201,),
+        n_genes=6,
+        registered_main_split={
+            sample: (
+                "train"
+                if index < 42
+                else "validation"
+                if index < 56
+                else "test"
+            )
+            for index, sample in enumerate(sample_ids)
+        },
     )
     for name in ("e1", "e2", "reliability", "splits", "selected_genes"):
         pd.testing.assert_frame_equal(first[name], second[name], check_exact=True)
@@ -711,6 +741,49 @@ def test_source_experiment_tables_are_bit_identical_for_same_seed():
         first[name].to_csv(first_buffer, sep="\t", index=False)
         second[name].to_csv(second_buffer, sep="\t", index=False)
         assert first_buffer.getvalue() == second_buffer.getvalue()
-    split_counts = first["splits"].groupby("split")["patient_id"].nunique()
+    repeated_splits = first["splits"].loc[
+        first["splits"]["split_set"] == "20_repeats"
+    ]
+    split_counts = repeated_splits.groupby("split")["patient_id"].nunique()
     assert split_counts.to_dict() == {"calibration": 14, "test": 14, "train": 42}
-    assert len(first["reliability"]) == 2 * 3 * 5
+    registered_counts = (
+        first["splits"]
+        .loc[first["splits"]["split_set"] == "registered_main_split"]
+        .groupby("split")["patient_id"]
+        .nunique()
+    )
+    assert registered_counts.to_dict() == {"test": 14, "train": 42, "validation": 14}
+    assert len(first["reliability"]) == 2 * 3 * 5 * 2
+    main_rows = first["e2"].loc[
+        first["e2"]["split_set"] == "registered_main_split"
+    ]
+    assert len(main_rows) == 2 * 3
+    assert not main_rows["included_in_20_repeats"].any()
+    assert set(main_rows["row_type"]) == {"registered_main_split"}
+    assert {"mean", "sd", "median", "q1", "q3"}.issubset(
+        set(first["e2"]["row_type"])
+    )
+    assert {
+        "slope_gt_5_repeats",
+        "slope_fit_not_converged_repeats",
+        "slope_gt_5_or_fit_not_converged_repeats",
+    }.issubset(first["e2"].columns)
+    paired = first["e2"].loc[
+        first["e2"]["row_type"].str.startswith("paired_difference")
+    ]
+    assert len(paired) == 2 * 2 * 3
+
+
+def test_platt_calibrator_recovers_known_logit_slope():
+    rng = np.random.default_rng(108)
+    base_logits = rng.uniform(-3.0, 3.0, size=20000)
+    base_probabilities = expit(base_logits)
+    labels = rng.binomial(1, expit(-0.35 + 1.65 * base_logits))
+
+    calibrator = _fit_calibrator("Platt", base_probabilities, labels)
+
+    assert calibrator is not None
+    assert calibrator.C == np.inf
+    assert calibrator.solver == "lbfgs"
+    assert calibrator.max_iter == 2000
+    assert calibrator.coef_[0, 0] == pytest.approx(1.65, abs=0.06)

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import warnings
 from collections.abc import Mapping, Sequence
 
 import matplotlib.pyplot as plt
@@ -11,6 +12,7 @@ import pandas as pd
 from scipy.optimize import brentq
 from scipy.special import expit
 from sklearn.isotonic import IsotonicRegression
+from sklearn.exceptions import ConvergenceWarning
 from sklearn.model_selection import GridSearchCV, StratifiedKFold, train_test_split
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import (
@@ -28,6 +30,7 @@ from .models import (
 )
 
 SOURCE_EXPERIMENT_SEEDS = tuple(range(7101, 7121))
+SOURCE_MAIN_SPLIT_SEED = 3101
 CALIBRATORS = ("none", "Platt", "isotonic")
 
 
@@ -123,10 +126,19 @@ def _metric_values(
     }
     if include_calibration:
         calibration_model = LogisticRegression(
-            C=1e6, solver="lbfgs", max_iter=2000
-        ).fit(_clipped_logit(p).reshape(-1, 1), y)
+            C=np.inf, solver="lbfgs", max_iter=2000
+        )
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always", ConvergenceWarning)
+            calibration_model.fit(_clipped_logit(p).reshape(-1, 1), y)
         metrics["calibration_slope"] = float(calibration_model.coef_[0, 0])
         metrics["calibration_intercept"] = _calibration_intercept_fixed_slope(y, p)
+        metrics["calibration_slope_gt_5"] = bool(
+            metrics["calibration_slope"] > 5
+        )
+        metrics["calibration_slope_fit_converged"] = not any(
+            issubclass(warning.category, ConvergenceWarning) for warning in caught
+        )
     return metrics, bins
 
 
@@ -136,7 +148,9 @@ def _fit_calibrator(
     if kind == "none":
         return None
     if kind == "Platt":
-        return LogisticRegression(C=1e6, solver="lbfgs", max_iter=2000).fit(
+        return LogisticRegression(
+            C=np.inf, solver="lbfgs", max_iter=2000
+        ).fit(
             _clipped_logit(calibration_probabilities).reshape(-1, 1),
             np.asarray(calibration_labels, dtype=int),
         )
@@ -227,6 +241,7 @@ def _summary_rows(
     *,
     group_columns: tuple[str, ...],
     metric_names: tuple[str, ...],
+    statistics: tuple[str, ...] = ("mean", "sd"),
 ) -> list[dict[str, object]]:
     frame = pd.DataFrame(rows)
     summaries = []
@@ -234,25 +249,92 @@ def _summary_rows(
         if not isinstance(keys, tuple):
             keys = (keys,)
         base = dict(zip(group_columns, keys))
-        for summary_stat in ("mean", "sd"):
+        for summary_stat in statistics:
             row: dict[str, object] = {
                 **base,
                 "row_type": summary_stat,
                 "repeat": summary_stat,
+                "split_set": "20_repeats",
+                "included_in_20_repeats": True,
                 "seed": "",
                 "hyperparameters": "",
             }
             for metric in metric_names:
                 values = group[metric].astype(float)
-                row[metric] = (
-                    float(values.mean())
-                    if summary_stat == "mean"
-                    else float(values.std(ddof=1))
-                )
+                if summary_stat == "mean":
+                    row[metric] = float(values.mean())
+                elif summary_stat == "sd":
+                    row[metric] = float(values.std(ddof=1))
+                elif summary_stat == "median":
+                    row[metric] = float(values.median())
+                elif summary_stat == "q1":
+                    row[metric] = float(values.quantile(0.25))
+                else:
+                    row[metric] = float(values.quantile(0.75))
             row["ece_bins"] = 5
             row["ece_bin_counts"] = ""
+            row["slope_gt_5_repeats"] = int(
+                (group["calibration_slope"] > 5).sum()
+            ) if "calibration_slope" in group else np.nan
+            row["slope_fit_not_converged_repeats"] = int(
+                (~group["calibration_slope_fit_converged"].astype(bool)).sum()
+            ) if "calibration_slope_fit_converged" in group else np.nan
             summaries.append(row)
     return summaries
+
+
+def _paired_difference_rows(
+    e2_rows: list[dict[str, object]],
+) -> list[dict[str, object]]:
+    frame = pd.DataFrame(e2_rows)
+    repeated = frame.loc[frame["split_set"] == "20_repeats"]
+    none = repeated.loc[repeated["calibrator"] == "none"].set_index(
+        ["model", "repeat"]
+    )
+    paired_rows = []
+    for row in repeated.loc[repeated["calibrator"] != "none"].to_dict("records"):
+        baseline = none.loc[(row["model"], row["repeat"])]
+        paired_rows.append(
+            {
+                **{
+                    key: row[key]
+                    for key in ("repeat", "seed", "model", "calibrator")
+                },
+                "row_type": "paired_difference",
+                "split_set": "20_repeats",
+                "included_in_20_repeats": True,
+                "brier_difference": float(row["brier"] - baseline["brier"]),
+                "ece_difference": float(row["ece"] - baseline["ece"]),
+            }
+        )
+    paired = pd.DataFrame(paired_rows)
+    summaries = []
+    for (model, calibrator), group in paired.groupby(
+        ["model", "calibrator"], sort=True
+    ):
+        for statistic in ("mean", "sd"):
+            summaries.append(
+                {
+                    "row_type": f"paired_difference_{statistic}",
+                    "split_set": "20_repeats",
+                    "included_in_20_repeats": True,
+                    "repeat": statistic,
+                    "seed": "",
+                    "model": model,
+                    "calibrator": calibrator,
+                    "brier_difference": float(
+                        group["brier_difference"].mean()
+                        if statistic == "mean"
+                        else group["brier_difference"].std(ddof=1)
+                    ),
+                    "ece_difference": float(
+                        group["ece_difference"].mean()
+                        if statistic == "mean"
+                        else group["ece_difference"].std(ddof=1)
+                    ),
+                }
+            )
+    return [*paired_rows, *summaries]
 
 
 def run_source_experiments(
@@ -262,6 +344,7 @@ def run_source_experiments(
     *,
     seeds: Sequence[int] = SOURCE_EXPERIMENT_SEEDS,
     n_genes: int = 2000,
+    registered_main_split: Mapping[str, str] | None = None,
 ) -> dict[str, pd.DataFrame]:
     """Run repeated source-only E1/E2 splits; accepts no target-cohort inputs."""
     if not seeds or len(set(seeds)) != len(seeds):
@@ -287,6 +370,9 @@ def run_source_experiments(
     split_rows: list[dict[str, object]] = []
     selected_gene_rows: list[dict[str, object]] = []
 
+    split_specs: list[
+        tuple[int | str, int, dict[str, list[str]], str, bool]
+    ] = []
     for repeat, seed in enumerate(seeds, start=1):
         patient_splits = _patient_splits(labels_by_patient, seed=int(seed))
         sample_splits = {
@@ -297,6 +383,49 @@ def run_source_experiments(
             )
             for split, patients in patient_splits.items()
         }
+        split_specs.append(
+            (repeat, int(seed), sample_splits, "20_repeats", True)
+        )
+
+    if registered_main_split is not None:
+        if set(registered_main_split) != set(source_expression.index):
+            raise ValueError(
+                "Registered main split sample IDs must match source expression"
+            )
+        if not set(registered_main_split.values()).issubset(
+            {"train", "validation", "test"}
+        ):
+            raise ValueError(
+                "Registered main split values must be train, validation, or test"
+            )
+        registered_samples = {
+            "train": sorted(
+                sample
+                for sample, split in registered_main_split.items()
+                if split == "train"
+            ),
+            "calibration": sorted(
+                sample
+                for sample, split in registered_main_split.items()
+                if split == "validation"
+            ),
+            "test": sorted(
+                sample
+                for sample, split in registered_main_split.items()
+                if split == "test"
+            ),
+        }
+        split_specs.append(
+            (
+                "registered_main_split",
+                SOURCE_MAIN_SPLIT_SEED,
+                registered_samples,
+                "registered_main_split",
+                False,
+            )
+        )
+
+    for repeat, seed, sample_splits, split_set, included_in_20_repeats in split_specs:
         for split, sample_ids in sample_splits.items():
             split_rows.extend(
                 {
@@ -304,7 +433,14 @@ def run_source_experiments(
                     "seed": int(seed),
                     "sample_id": sample,
                     "patient_id": patient_by_sample[sample],
-                    "split": split,
+                    "split": (
+                        "validation"
+                        if split == "calibration"
+                        and split_set == "registered_main_split"
+                        else split
+                    ),
+                    "split_set": split_set,
+                    "included_in_20_repeats": included_in_20_repeats,
                 }
                 for sample in sample_ids
             )
@@ -321,6 +457,8 @@ def run_source_experiments(
             {
                 "repeat": repeat,
                 "seed": int(seed),
+                "split_set": split_set,
+                "included_in_20_repeats": included_in_20_repeats,
                 "gene": gene,
             }
             for gene in selected_genes
@@ -342,9 +480,13 @@ def run_source_experiments(
             )
             e1_rows.append(
                 {
-                    "row_type": "repeat",
+                    "row_type": (
+                        "repeat" if split_set == "20_repeats" else split_set
+                    ),
                     "repeat": repeat,
                     "seed": int(seed),
+                    "split_set": split_set,
+                    "included_in_20_repeats": included_in_20_repeats,
                     "model": model_name,
                     "hyperparameters": json.dumps(parameters, sort_keys=True),
                     "n_train": len(training_samples),
@@ -367,9 +509,13 @@ def run_source_experiments(
                 )
                 e2_rows.append(
                     {
-                        "row_type": "repeat",
+                        "row_type": (
+                            "repeat" if split_set == "20_repeats" else split_set
+                        ),
                         "repeat": repeat,
                         "seed": int(seed),
+                        "split_set": split_set,
+                        "included_in_20_repeats": included_in_20_repeats,
                         "model": model_name,
                         "calibrator": calibrator_name,
                         "hyperparameters": json.dumps(parameters, sort_keys=True),
@@ -383,6 +529,8 @@ def run_source_experiments(
                     {
                         "repeat": repeat,
                         "seed": int(seed),
+                        "split_set": split_set,
+                        "included_in_20_repeats": included_in_20_repeats,
                         "model": model_name,
                         "calibrator": calibrator_name,
                         **bin_row,
@@ -392,7 +540,7 @@ def run_source_experiments(
 
     e1_metric_names = ("auroc", "auprc", "brier", "ece")
     e1_summary = _summary_rows(
-        e1_rows,
+        [row for row in e1_rows if row["split_set"] == "20_repeats"],
         group_columns=("model",),
         metric_names=e1_metric_names,
     )
@@ -405,13 +553,37 @@ def run_source_experiments(
         "calibration_slope",
     )
     e2_summary = _summary_rows(
-        e2_rows,
+        [row for row in e2_rows if row["split_set"] == "20_repeats"],
         group_columns=("model", "calibrator"),
         metric_names=e2_metric_names,
+        statistics=("mean", "sd", "median", "q1", "q3"),
     )
+    for row in e2_summary:
+        repeated_group = pd.DataFrame(
+            [
+                result
+                for result in e2_rows
+                if result["split_set"] == "20_repeats"
+                and result["model"] == row["model"]
+                and result["calibrator"] == row["calibrator"]
+            ]
+        )
+        row["slope_gt_5_repeats"] = int(
+            repeated_group["calibration_slope_gt_5"].sum()
+        )
+        row["slope_fit_not_converged_repeats"] = int(
+            (~repeated_group["calibration_slope_fit_converged"]).sum()
+        )
+        row["slope_gt_5_or_fit_not_converged_repeats"] = int(
+            (
+                repeated_group["calibration_slope_gt_5"]
+                | ~repeated_group["calibration_slope_fit_converged"]
+            ).sum()
+        )
+    paired_rows = _paired_difference_rows(e2_rows)
     return {
         "e1": pd.DataFrame([*e1_rows, *e1_summary]),
-        "e2": pd.DataFrame([*e2_rows, *e2_summary]),
+        "e2": pd.DataFrame([*e2_rows, *e2_summary, *paired_rows]),
         "reliability": pd.DataFrame(reliability_rows),
         "splits": pd.DataFrame(split_rows),
         "selected_genes": pd.DataFrame(selected_gene_rows),
@@ -422,6 +594,9 @@ def save_source_reliability_plot(
     reliability_data: pd.DataFrame, output_path: str
 ) -> None:
     """Plot source-only reliability curves aggregated across repeats."""
+    reliability_data = reliability_data.loc[
+        reliability_data["split_set"] == "20_repeats"
+    ]
     model_names = sorted(reliability_data["model"].unique())
     figure, axes = plt.subplots(
         1, len(model_names), figsize=(6 * len(model_names), 5), squeeze=False

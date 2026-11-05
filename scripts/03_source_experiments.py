@@ -15,6 +15,7 @@ sys.path.insert(0, str(ROOT / "src"))
 
 from cohortshift.source_experiments import (  # noqa: E402
     SOURCE_EXPERIMENT_SEEDS,
+    SOURCE_MAIN_SPLIT_SEED,
     run_source_experiments,
     save_source_reliability_plot,
 )
@@ -48,7 +49,7 @@ def main(experiment: str) -> int:
     saved_patients = pd.read_csv(
         patient_list_path,
         sep="\t",
-        usecols=["cohort", "sample_id", "patient_id"],
+        usecols=["cohort", "sample_id", "patient_id", "split"],
         dtype=str,
     )
     if set(saved_patients["cohort"]) != {"beat_aml"}:
@@ -58,6 +59,14 @@ def main(experiment: str) -> int:
             "The saved Beat AML main patient list must contain 426 distinct patients"
         )
     patient_by_sample = saved_patients.set_index("sample_id")["patient_id"].to_dict()
+    registered_main_split = saved_patients.set_index("sample_id")["split"].to_dict()
+    split_counts = saved_patients["split"].value_counts().to_dict()
+    expected_split_counts = {"train": 256, "validation": 85, "test": 85}
+    if split_counts != expected_split_counts:
+        raise ValueError(
+            "The registered Beat AML main split must be 256/85/85; found "
+            f"{split_counts}"
+        )
 
     source_expression = pd.read_csv(
         expression_path,
@@ -82,7 +91,9 @@ def main(experiment: str) -> int:
         source_labels,
         patient_by_sample,
         seeds=SOURCE_EXPERIMENT_SEEDS,
+        registered_main_split=registered_main_split,
     )
+    _print_hyperparameter_distribution(results["e1"])
     SPLITS_DIR.mkdir(parents=True, exist_ok=True)
     TABLES_DIR.mkdir(parents=True, exist_ok=True)
     (SPLITS_DIR / "e1_e2_seeds.json").write_text(
@@ -90,6 +101,8 @@ def main(experiment: str) -> int:
             {
                 "repeats": len(SOURCE_EXPERIMENT_SEEDS),
                 "seeds": list(SOURCE_EXPERIMENT_SEEDS),
+                "registered_main_split_seed": SOURCE_MAIN_SPLIT_SEED,
+                "registered_main_split_is_one_of_20_repeats": False,
                 "split": (
                     "patient-stratified 60/20/20; reserve 40% holdout, "
                     "then split holdout equally into calibration and test"
@@ -135,13 +148,50 @@ def main(experiment: str) -> int:
         )
         print(
             results["e2"].loc[
-                results["e2"]["row_type"].isin(["mean", "sd"])
+                results["e2"]["row_type"].isin(
+                    ["mean", "sd", "median", "q1", "q3"]
+                )
             ].to_string(index=False)
         )
         print(f"Wrote {TABLES_DIR / 'e2_calibration.tsv'}")
         print(f"Wrote {TABLES_DIR / 'e2_reliability.tsv'}")
         print(f"Wrote {FIGURES_DIR / 'reliability_source.png'}")
     return 0
+
+
+def _print_hyperparameter_distribution(e1_table: pd.DataFrame) -> None:
+    repeated = e1_table.loc[
+        (e1_table["row_type"] == "repeat")
+        & (e1_table["split_set"] == "20_repeats")
+    ]
+    logistic = repeated.loc[repeated["model"] == "logistic"]
+    chosen_c = logistic["hyperparameters"].map(
+        lambda value: json.loads(value)["classifier__C"]
+    )
+    c_counts = chosen_c.value_counts().sort_index()
+    edge_count = int(chosen_c.isin({0.001, 1.0}).sum())
+    print(f"CHOSEN logistic C distribution: {c_counts.to_dict()}")
+    print(
+        f"CHOSEN logistic C at grid edge: {edge_count}/{len(chosen_c)} repeats; "
+        f"majority_flag={edge_count > len(chosen_c) / 2}"
+    )
+    hgb = repeated.loc[repeated["model"] == "hist_gradient_boosting"]
+    chosen_hgb = hgb["hyperparameters"].map(
+        lambda value: json.loads(value)
+    )
+    hgb_counts = pd.Series(
+        [
+            (
+                parameters["max_depth"],
+                parameters["learning_rate"],
+            )
+            for parameters in chosen_hgb
+        ]
+    ).value_counts().sort_index()
+    print(
+        "CHOSEN HGB max_depth/learning_rate distribution: "
+        f"{hgb_counts.to_dict()}"
+    )
 
 
 if __name__ == "__main__":

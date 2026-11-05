@@ -74,7 +74,8 @@ revision are disclosed below.
   split it equally into calibration and test sets; stratify both steps on
   NPM1. For each repeat, select the 2,000 highest-variance genes using that
   repeat's training samples only. Tune only within training using 5-fold
-  stratified CV maximizing AUROC.
+  stratified CV maximizing AUROC. Also report the registered 256/85/85 main
+  split as separate rows; it is not one of the 20 repeats.
 - **E1 models and fixed grids:** L2 logistic regression in a
   `StandardScaler`/logistic pipeline, with `C` in `{0.001, 0.01, 0.1, 1}`;
   and `HistGradientBoostingClassifier`, with `max_depth` in `{2, 3}`,
@@ -91,8 +92,13 @@ revision are disclosed below.
   probabilities to `[1e-6, 1 - 1e-6]` before calculating logits. Estimate
   calibration slope from a logistic regression with free intercept and slope;
   estimate calibration intercept from a logistic model with slope fixed at 1
-  using the logit as an offset. Save five-bin reliability data and a
-  source-only reliability plot.
+  using the logit as an offset. Platt takes `logit(p)` as its one-dimensional
+  input, uses an unpenalized logistic fit (`C=np.inf`) with
+  `solver="lbfgs"` and `max_iter=2000`. In addition to mean and SD, report median, Q1, and Q3
+  for slope and intercept; count repeats with slope above 5 and slope-fit
+  non-convergence. Report paired per-repeat calibrator-minus-none differences
+  for Brier and ECE, plus their mean and SD. Save five-bin reliability data and
+  a source-only reliability plot.
 - **E6a (sensitivity analysis):** restrict to `ONCOTREE_CODE == "AML"` and
   exclude APL samples in both cohorts; rerun E3/E4.
 - **E6b (exploratory):** add back the fallback samples selected by the
@@ -216,6 +222,10 @@ writes `results/tables/e2_calibration.tsv`,
 `results/tables/e2_reliability.tsv`, and
 `results/figures/reliability_source.png`. Twenty-repeat patient split
 assignments and seeds are saved under `results/splits/`.
+The E2 table keeps all repeat-level rows, including selected hyperparameters,
+and separate registered-main-split rows marked as not part of the 20 repeats.
+The runner prints the selected logistic C and HGB parameter distributions and
+flags when logistic C is at a grid edge in more than half of the 20 repeats.
 `make run` fails clearly if the expected input files have not been fetched and
 writes the inventory and analysis-set counts.
 The inventory reports each file's parsed header and inferred identifier
