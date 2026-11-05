@@ -4,6 +4,8 @@ from io import StringIO
 import numpy as np
 import pandas as pd
 import pytest
+from matplotlib.container import ErrorbarContainer
+from matplotlib import pyplot as plt
 from scipy.special import expit
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import roc_auc_score
@@ -59,9 +61,11 @@ from cohortshift.source_experiments import (
 from cohortshift.experiments import (
     E3_METHODS,
     _bootstrap_metric_intervals,
+    _append_repeat_summaries,
     _assemble_cross_cohort_tables,
     predict_adapted_probabilities,
 )
+from cohortshift.plots import save_coverage_plot, save_target_reliability_plot
 
 
 def test_cbioportal_clinical_metadata_header(tmp_path):
@@ -986,7 +990,51 @@ def test_raw_a3_uses_normalized_importance_weights(monkeypatch):
     assert result["weight_diagnostics"]["degenerate_flag"] is False
 
 
-def test_cross_cohort_tables_are_deterministic_and_include_registered_outputs():
+def test_cross_cohort_tables_are_deterministic_and_include_registered_outputs(
+    monkeypatch,
+):
+    import cohortshift.experiments as experiments
+
+    bootstrap_calls = []
+
+    def fake_metric_intervals(labels, probabilities, patient_ids, *, seed):
+        bootstrap_calls.append(seed)
+        intervals = {}
+        for metric in (
+            "auroc",
+            "auprc",
+            "brier",
+            "ece",
+            "calibration_intercept",
+            "calibration_slope",
+        ):
+            intervals[f"{metric}_ci_lower"] = 0.1
+            intervals[f"{metric}_ci_upper"] = 0.9
+        intervals["bootstrap_slope_fit_failed_or_gt5_fraction"] = 0.0
+        intervals["bootstrap_n_resamples"] = 2000
+        return intervals
+
+    def fake_coverage_intervals(
+        labels, probabilities, threshold, patient_ids, *, seed
+    ):
+        return {
+            f"target_{metric}_ci_{bound}": 0.5
+            for metric in (
+                "coverage",
+                "positive_class_coverage",
+                "negative_class_coverage",
+                "mean_prediction_set_size",
+                "empty_set_fraction",
+            )
+            for bound in ("lower", "upper")
+        }
+
+    monkeypatch.setattr(
+        experiments, "_bootstrap_metric_intervals", fake_metric_intervals
+    )
+    monkeypatch.setattr(
+        experiments, "_bootstrap_coverage_intervals", fake_coverage_intervals
+    )
     rng = np.random.default_rng(584)
     calibration_labels = np.tile([0, 1], 30)
     calibration_probabilities = np.clip(
@@ -1083,10 +1131,135 @@ def test_cross_cohort_tables_are_deterministic_and_include_registered_outputs():
     assert "frac_pred_at_clip_bounds" in main_table
     assert "target_bootstrap_slope_fit_failed_or_gt5_fraction" in main_table
     assert "target_brier_difference_a0_a1_minus_a0" in main_table
+    for metric in (
+        "auroc",
+        "auprc",
+        "brier",
+        "ece",
+    ):
+        assert main_table[f"target_{metric}_ci_lower"].notna().all()
+        assert main_table[f"target_{metric}_ci_upper"].notna().all()
+    for metric in ("calibration_slope", "calibration_intercept"):
+        assert f"target_{metric}_ci_lower" in main_table
+        assert f"target_{metric}_ci_upper" in main_table
+        eligible = main_table["frac_pred_at_clip_bounds"] <= 0.05
+        assert main_table.loc[eligible, f"target_{metric}_ci_lower"].notna().all()
+        assert main_table.loc[eligible, f"target_{metric}_ci_upper"].notna().all()
+        assert main_table.loc[~eligible, f"target_{metric}_ci_lower"].isna().all()
+        assert main_table.loc[~eligible, f"target_{metric}_ci_upper"].isna().all()
+    assert len(bootstrap_calls) == 2 * len(main_table)
     assert "target_coverage_ci_lower" in first["conformal"]
     assert {"repeat", "median", "q1", "q3"}.issubset(
         set(first["repeats"]["row_type"])
     )
+
+
+def test_repeat_slope_summaries_require_15_valid_repeats():
+    rows = []
+    for repeat in range(20):
+        rows.append(
+            {
+                "split_set": "20_repeats",
+                "repeat": repeat,
+                "method": "A0",
+                "model": "logistic",
+                "calibrator": "none",
+                "outcome": "NPM1",
+                "analysis_role": "confirmatory",
+                "status": "complete",
+                "target_calibration_slope": (
+                    float(repeat) if repeat < 14 else np.nan
+                ),
+                "target_calibration_intercept": (
+                    float(repeat) if repeat < 15 else np.nan
+                ),
+                "source_test_calibration_slope": float(repeat),
+                "source_test_calibration_intercept": (
+                    float(repeat) if repeat < 14 else np.nan
+                ),
+            }
+        )
+
+    summaries = _append_repeat_summaries(rows)
+    median = next(row for row in summaries if row["row_type"] == "median")
+
+    assert median["target_calibration_slope_n_valid_repeats"] == 14
+    assert np.isnan(median["target_calibration_slope"])
+    assert median["target_calibration_intercept_n_valid_repeats"] == 15
+    assert median["target_calibration_intercept"] == pytest.approx(7.0)
+    assert median["source_test_calibration_slope_n_valid_repeats"] == 20
+    assert median["source_test_calibration_intercept_n_valid_repeats"] == 14
+    assert np.isnan(median["source_test_calibration_intercept"])
+
+
+def test_target_plots_show_bootstrap_intervals_and_unconnected_counted_bins(
+    tmp_path, monkeypatch
+):
+    import cohortshift.plots as plots
+
+    captured_figures = []
+    original_subplots = plots.plt.subplots
+
+    def capture_subplots(*args, **kwargs):
+        figure, axes = original_subplots(*args, **kwargs)
+        captured_figures.append(figure)
+        return figure, axes
+
+    monkeypatch.setattr(plots.plt, "subplots", capture_subplots)
+    reliability = pd.DataFrame(
+        {
+            "outcome": ["NPM1"] * 5,
+            "method": ["A0"] * 5,
+            "bin": [1, 2, 3, 4, 5],
+            "bin_count": [35, 35, 35, 34, 34],
+            "mean_predicted_probability": [0.1, 0.3, 0.5, 0.7, 0.9],
+            "observed_fraction": [0.08, 0.28, 0.52, 0.68, 0.92],
+        }
+    )
+    save_target_reliability_plot(
+        reliability, tmp_path / "reliability_target.png"
+    )
+    reliability_figure = captured_figures[-1]
+    reliability_axis = reliability_figure.axes[0]
+    assert len(reliability_axis.lines) == 1
+    assert len(reliability_axis.collections) == 1
+    assert [text.get_text() for text in reliability_axis.texts] == [
+        "35",
+        "35",
+        "35",
+        "34",
+        "34",
+    ]
+
+    coverage = pd.DataFrame(
+        {
+            "split_set": ["registered_main_split"],
+            "model": ["logistic"],
+            "calibrator": ["none"],
+            "outcome": ["NPM1"],
+            "status": ["complete"],
+            "method": ["A0"],
+            "target_coverage": [0.9],
+            "target_coverage_ci_lower": [0.8],
+            "target_coverage_ci_upper": [0.95],
+            "target_positive_class_coverage": [0.85],
+            "target_positive_class_coverage_ci_lower": [0.7],
+            "target_positive_class_coverage_ci_upper": [0.95],
+            "target_negative_class_coverage": [0.95],
+            "target_negative_class_coverage_ci_lower": [0.85],
+            "target_negative_class_coverage_ci_upper": [1.0],
+        }
+    )
+    save_coverage_plot(coverage, tmp_path / "coverage.png")
+    coverage_figure = captured_figures[-1]
+    assert len(coverage_figure.axes) == 2
+    assert all(
+        any(isinstance(container, ErrorbarContainer) for container in axis.containers)
+        for axis in coverage_figure.axes
+    )
+
+    for figure in captured_figures:
+        plt.close(figure)
 
 
 def test_target_bootstrap_metrics_are_bit_identical_for_same_seed():

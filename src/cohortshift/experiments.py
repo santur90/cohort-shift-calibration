@@ -640,12 +640,7 @@ def _assemble_cross_cohort_tables(
                         and np.isfinite(source_metrics[metric])
                         else np.nan
                     )
-                if (
-                    split_set == "registered_main_split"
-                    and model_name == "logistic"
-                    and calibrator_name == "none"
-                    and method == "A0"
-                ):
+                if split_set == "registered_main_split":
                     row.update(
                         {
                             f"target_{key}": value
@@ -730,22 +725,50 @@ def _assemble_cross_cohort_tables(
             "calibration_slope",
         ):
             values = [item[metric] for item in metrics if metric in item and np.isfinite(item[metric])]
-            row[f"target_repeat_median_{metric}"] = float(np.median(values)) if values else np.nan
-            row[f"target_repeat_q1_{metric}"] = float(np.quantile(values, 0.25)) if values else np.nan
-            row[f"target_repeat_q3_{metric}"] = float(np.quantile(values, 0.75)) if values else np.nan
+            target_summary_values = values
+            if metric in {"calibration_intercept", "calibration_slope"} and len(values) < 15:
+                target_summary_values = []
+            row[f"target_repeat_{metric}_n_valid_repeats"] = len(values)
+            row[f"target_repeat_median_{metric}"] = (
+                float(np.median(target_summary_values))
+                if target_summary_values
+                else np.nan
+            )
+            row[f"target_repeat_q1_{metric}"] = (
+                float(np.quantile(target_summary_values, 0.25))
+                if target_summary_values
+                else np.nan
+            )
+            row[f"target_repeat_q3_{metric}"] = (
+                float(np.quantile(target_summary_values, 0.75))
+                if target_summary_values
+                else np.nan
+            )
             source_values = [
                 item[metric]
                 for item in source_metrics
                 if metric in item and np.isfinite(item[metric])
             ]
+            source_summary_values = source_values
+            if metric in {"calibration_intercept", "calibration_slope"} and len(source_values) < 15:
+                source_summary_values = []
+            row[f"source_test_repeat_{metric}_n_valid_repeats"] = len(
+                source_values
+            )
             row[f"source_repeat_median_{metric}"] = (
-                float(np.median(source_values)) if source_values else np.nan
+                float(np.median(source_summary_values))
+                if source_summary_values
+                else np.nan
             )
             row[f"source_repeat_q1_{metric}"] = (
-                float(np.quantile(source_values, 0.25)) if source_values else np.nan
+                float(np.quantile(source_summary_values, 0.25))
+                if source_summary_values
+                else np.nan
             )
             row[f"source_repeat_q3_{metric}"] = (
-                float(np.quantile(source_values, 0.75)) if source_values else np.nan
+                float(np.quantile(source_summary_values, 0.75))
+                if source_summary_values
+                else np.nan
             )
     repeat_rows = _append_repeat_summaries(repeat_rows)
     return {
@@ -863,6 +886,25 @@ def _append_repeat_summaries(
                     .astype(float)
                     .dropna()
                 )
+                if (
+                    column.startswith(("target_", "source_test_"))
+                    and column.endswith(
+                        ("calibration_intercept", "calibration_slope")
+                    )
+                ):
+                    side = (
+                        "target"
+                        if column.startswith("target_")
+                        else "source_test"
+                    )
+                    metric = (
+                        "calibration_intercept"
+                        if column.endswith("calibration_intercept")
+                        else "calibration_slope"
+                    )
+                    row[f"{side}_{metric}_n_valid_repeats"] = len(values)
+                    if len(values) < 15:
+                        values = values.iloc[0:0]
                 row[column] = (
                     float(values.quantile(quantile)) if not values.empty else np.nan
                 )
