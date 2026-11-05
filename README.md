@@ -46,6 +46,16 @@ revision are disclosed below.
 - **Expression gene availability:** Genes not measured (non-missing) in every
   sample of both cohorts are excluded before feature selection. This decision
   uses gene availability only, no labels or model results.
+- **A0 target-expression transform:** for target-cohort expression values
+  `x`, replace each value with `log2(max(x, 0) + 1)`; source expression is
+  unchanged because Beat AML is already log2. A0 uses no statistics and no
+  labels. It is the primary no-adaptation setting; raw units are reported as
+  secondary analyses. A1 and A3 are applied on top of A0 and reported as
+  `A0+A1` and `A0+A3`. A2 is invariant to monotone transforms and is reported
+  once.
+- **A0 decision disclosure:** A0 was chosen after viewing target expression
+  value ranges, not target labels. A3 on raw units was already observed to be
+  degenerate, with all weights at the 0.1 lower clip.
 - **A3 diagnostics:** report effective sample size (ESS), maximum weight, and
   clip bounds, minimum and median weights, and the fractions at each clip
   bound. The degenerate-weight flag is true when ESS is below 10% of N, the
@@ -75,9 +85,10 @@ revision are disclosed below.
   an outcome label.
 - **Patient IDs:** the sample ID without trailing `_BAxxxx` in Beat AML or
   trailing `-03` in TCGA-LAML.
-- **Methods:** none (source-trained baseline); A1, per-cohort gene
-  standardization; A2, within-sample gene-expression rank; and A3,
-  domain-classifier reweighting with clipped weights.
+- **Methods:** raw-unit rows are retained for none (source-trained baseline),
+  A1 (per-cohort gene standardization), A2 (within-sample gene-expression
+  rank), and A3 (domain-classifier reweighting with clipped weights). Also
+  report A0, A0+A1, and A0+A3; A2 is reported only once.
 - **No tuning on target results.** Target labels are reserved for evaluation;
   they are not used to select features, fit models, tune hyperparameters, or
   choose adaptation settings.
