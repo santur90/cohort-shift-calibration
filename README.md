@@ -99,6 +99,20 @@ revision are disclosed below.
   non-convergence. Report paired per-repeat calibrator-minus-none differences
   for Brier and ECE, plus their mean and SD. Save five-bin reliability data and
   a source-only reliability plot.
+- **E2 reporting decisions:** based on source-only results and before any
+  target model result, the source reference for E3 is the median and IQR over
+  the 20 repeats, with the registered main split shown separately. The main
+  split was favorable (logistic AUROC 0.995 versus the 20-repeat median 0.968),
+  so it is not used alone. Calibration slope and intercept are summarized by
+  median and IQR, not mean. For Platt and isotonic, slope and intercept are
+  reported as NA when more than 5% of predictions fall at either probability
+  clip bound.
+- **E2 hyperparameter and Platt decisions:** the registered logistic C grid is
+  retained. Chosen C was 1.0 in 10/20 repeats (upper edge) and 0.01 in 3/20
+  repeats (lower edge), for 13/20 repeats at a grid edge. Platt was changed to
+  use Platt's smoothed targets,
+  `t+ = (N+ + 1)/(N+ + 2)` and `t- = 1/(N- + 2)`, because the prior
+  unpenalized fit produced hard 0/1 outputs on near-separable calibration sets.
 - **E6a (sensitivity analysis):** restrict to `ONCOTREE_CODE == "AML"` and
   exclude APL samples in both cohorts; rerun E3/E4.
 - **E6b (exploratory):** add back the fallback samples selected by the
