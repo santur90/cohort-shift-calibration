@@ -109,35 +109,52 @@ revision are disclosed below.
   median and IQR, not mean. For Platt and isotonic, slope and intercept are
   reported as NA when more than 5% of predictions fall at either probability
   clip bound.
-- **E2 hyperparameter and Platt decisions:** the registered logistic C grid is
-  retained. Chosen C was 1.0 in 10/20 repeats (upper edge) and 0.01 in 3/20
-  repeats (lower edge), for 13/20 repeats at a grid edge. Platt was changed to
-  use Platt's smoothed targets,
-  `t+ = (N+ + 1)/(N+ + 2)` and `t- = 1/(N- + 2)`, because the prior
-  unpenalized fit produced hard 0/1 outputs on near-separable calibration sets.
+- **E2 logistic-grid correction:** the code's registered grid is
+  `C in {0.001, 0.01, 0.1, 1}`. Correcting an earlier README statement,
+  chosen C was 1.0 in 10/20 repeats (upper edge), 0.1 in 7/20, and 0.01 in
+  3/20; the lower edge was never selected. The registered grid is kept.
+- **E2 Platt and clip-bound decisions:** Platt uses Platt's smoothed targets,
+  `t+ = (N+ + 1)/(N+ + 2)` and `t- = 1/(N- + 2)`. For any calibrator or
+  setting, report calibration slope and intercept as NA when more than 5% of
+  predictions are at either probability clip bound.
 - **E3/E4 model selection:** the primary model is L2 logistic regression and
   the primary calibrator is none. HGB, Platt, and isotonic are secondary
   exploratory analyses. This choice is based on source-only E1/E2 results:
-  logistic had higher AUROC and lower Brier/ECE, and calibrators did not
-  improve source calibration. The choice was made after viewing source results
-  and before any target model results.
+  Platt worsened Brier versus none in 19/20 repeats; isotonic was mixed, with
+  a median of 81% of predictions at probability clip bounds. The choice was
+  made after viewing source results and before any target model result.
 - **E3/E4 expression scale and adaptations:** A0
   (`target log2(max(x, 0) + 1)`) is the primary no-adaptation setting; raw
-  units are secondary. Compare A0, A0+A1, A2, and A0+A3. A2 is applied to raw
-  target values and both cohorts because A0's `max(x, 0)` operation creates
-  ties and is not strictly monotone. A3 uses the registered domain-classifier
-  and clipping unchanged, normalizes weights to mean 1 for model training,
-  and reports ESS, maximum weight, clip fractions, and degeneracy. A3 was
-  degenerate in E0 (all weights at the 0.1 lower clip); report it as failed
-  and do not tune it.
-- **E3/E4 comparisons and uncertainty:** run E3/E4 once. Compare target
-  results with the source-only 20-repeat median/IQR and the registered main
-  split as separate references, never with a single source result alone.
-  Summarize source variability as mean/SD and median/IQR over the 20 repeats;
-  do not combine source and target uncertainty. For the primary logistic/no-
-  calibration model trained on the registered 256/85/85 main split, estimate
-  target uncertainty with 2,000 patient-level bootstrap resamples and 95%
-  percentile confidence intervals.
+  units are secondary. The registered adaptations are A0, A0+A1, A2, and
+  A0+A3; raw A3 is also reported as a secondary adaptation. A2 is applied to
+  raw target values and both cohorts because A0's `max(x, 0)` operation
+  creates ties and is not strictly monotone. A3 uses the registered
+  domain-classifier and clipping unchanged, normalizes weights to mean 1 for
+  model training, and reports ESS, maximum weight, clip fractions, and the
+  degenerate flag. A3 was degenerate in E0 (all weights at the 0.1 lower
+  clip); label it as failed and do not tune it.
+- **E3/E4 source reference and repeats:** compare with the 20-repeat source
+  median and IQR and report the registered main split separately. The main
+  split is favorable (logistic AUROC 0.995 versus 20-repeat median 0.968);
+  never use the main split alone. For each of the 20 repeats, fit that
+  repeat's own model using its own top-2,000 genes and apply it to all 173
+  TCGA-LAML samples; report repeat results as median/IQR. Do not combine the
+  20-repeat source of variability with the registered-main-split target
+  bootstrap. Summarize calibration slope/intercept by median/IQR, not mean,
+  and compare target slope/intercept with the source 20-repeat distribution,
+  not with 1.
+- **E3/E4 target uncertainty:** for the primary model trained on the
+  registered 256/85/85 main split, estimate target uncertainty using 2,000
+  patient-level bootstrap resamples and 95% percentile confidence intervals.
+  Report the fraction of bootstrap resamples where the calibration-slope fit
+  failed or the fitted slope exceeded 5.
+- **Confirmatory comparisons:** the only confirmatory comparisons are
+  (1) A0 logistic with no calibration target Brier score, calibration
+  intercept, and calibration slope versus the 20-repeat source distribution;
+  and (2) the paired patient-bootstrap difference in target Brier score,
+  A0+A1 minus A0. All other E3/E4 outcomes and settings are exploratory.
+- **E3/E4 lock:** run E3/E4 once. No method changes are allowed after viewing
+  target results. Bug fixes are allowed only after disclosure in this README.
 - **E3/E4 decision lock:** no method changes after viewing target results.
   Bug fixes are permitted only when disclosed in this README before changing
   the analysis.
