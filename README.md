@@ -6,7 +6,9 @@ and newer.
 
 ## Pre-registration
 
-This section is fixed before examining any target-cohort results.
+This section was finalized before examining target labels or model outputs.
+The earlier expression-only E0 run and subsequent source-only analysis-set
+revision are disclosed below.
 
 - **Main analysis set (Beat AML):** retain samples with both RNA-seq and
   mutation profiling and
