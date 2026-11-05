@@ -66,6 +66,33 @@ revision are disclosed below.
   within each cross-validation training fold and apply them to its held-out
   fold. Also report the prior whole-data-standardized AUROC separately; this
   standardization forces equal class means and biases CV AUROC below 0.5.
+- **E1/E2 source-only protocol:** use Beat AML main-set expression, NPM1 labels,
+  the saved 14,005 jointly retained gene names, and the saved list of 426
+  Beat AML main-set patients only. Never load target-cohort expression or
+  labels. Run 20 repeated patient-stratified 60/20/20 train/calibration/test
+  splits with seeds 7101 through 7120. First reserve 40% as a holdout, then
+  split it equally into calibration and test sets; stratify both steps on
+  NPM1. For each repeat, select the 2,000 highest-variance genes using that
+  repeat's training samples only. Tune only within training using 5-fold
+  stratified CV maximizing AUROC.
+- **E1 models and fixed grids:** L2 logistic regression in a
+  `StandardScaler`/logistic pipeline, with `C` in `{0.001, 0.01, 0.1, 1}`;
+  and `HistGradientBoostingClassifier`, with `max_depth` in `{2, 3}`,
+  `learning_rate` in `{0.05, 0.1}`, `max_iter=200`, `early_stopping=True`,
+  and `l2_regularization=1.0`. Report AUROC, AUPRC, Brier score, and ECE
+  using 5 equal-count bins per test split, including bin counts. Summarize
+  metric means and sample standard deviations across repeats. Each test split
+  has about 85 patients and about 24 positives, so single-split metrics are
+  noisy.
+- **E2 calibration:** for each tuned model and repeat, fit none, Platt, and
+  isotonic calibrators on that repeat's calibration split only (about 85
+  patients); isotonic calibration is noisy at this size. Evaluate the same
+  test metrics plus calibration slope and calibration intercept. Clip
+  probabilities to `[1e-6, 1 - 1e-6]` before calculating logits. Estimate
+  calibration slope from a logistic regression with free intercept and slope;
+  estimate calibration intercept from a logistic model with slope fixed at 1
+  using the logit as an offset. Save five-bin reliability data and a
+  source-only reliability plot.
 - **E6a (sensitivity analysis):** restrict to `ONCOTREE_CODE == "AML"` and
   exclude APL samples in both cohorts; rerun E3/E4.
 - **E6b (exploratory):** add back the fallback samples selected by the
@@ -109,6 +136,8 @@ revision are disclosed below.
   source-train-only top-variance gene selection.
 - `scripts/02_e0_shift.py`: runs E0 domain-classifier AUROC, PCA overlap, and
   per-gene KS diagnostics for the requested methods.
+- `scripts/03_source_experiments.py`: runs source-only E1/E2 with repeated
+  patient splits and writes baseline, calibration, and reliability outputs.
 - `config.tsv`: cohort IDs and RNA expression filenames.
 - `results/tables/` and `results/figures/`: generated outputs.
 
@@ -176,6 +205,15 @@ feature selection, so E0 domain-classifier and PCA diagnostics do not impute
 expression values. E0's A3 summary reports the effective sample size, maximum
 weight, minimum and median weights, clip bounds, fractions at each clip, and
 degenerate-weight status with its reason.
+`make e1` and `make e2` run source-only experiments without loading target
+expression or labels. Preparation saves the jointly retained gene names to
+`data/processed/jointly_complete_gene_names.txt`; E1/E2 require that list,
+the Beat AML aligned expression and NPM1 labels, and the saved Beat AML
+main-set patient list. E1 writes `results/tables/e1_baseline.tsv` and E2
+writes `results/tables/e2_calibration.tsv`,
+`results/tables/e2_reliability.tsv`, and
+`results/figures/reliability_source.png`. Twenty-repeat patient split
+assignments and seeds are saved under `results/splits/`.
 `make run` fails clearly if the expected input files have not been fetched and
 writes the inventory and analysis-set counts.
 The inventory reports each file's parsed header and inferred identifier
