@@ -57,7 +57,9 @@ from cohortshift.source_experiments import (
     select_repeat_genes,
 )
 from cohortshift.experiments import (
+    E3_METHODS,
     _bootstrap_metric_intervals,
+    _assemble_cross_cohort_tables,
     predict_adapted_probabilities,
 )
 
@@ -907,6 +909,183 @@ def test_e3_predictions_are_label_free_for_target_and_seed_stable():
         )
     assert isinstance(
         result["predictions"]["logistic"]["estimator"], LogisticRegression
+    )
+    assert "standardscaler" not in result["predictions"]["logistic"][
+        "estimator"
+    ].get_params()
+
+
+def test_degenerate_a3_prediction_reports_failed_status(monkeypatch):
+    import cohortshift.experiments as experiments
+
+    rng = np.random.default_rng(128)
+    source = pd.DataFrame(rng.normal(size=(60, 5)), columns=list("abcde"))
+    target = pd.DataFrame(rng.normal(size=(12, 5)), columns=list("abcde"))
+    labels = np.tile([0, 1], 30)
+    calibration = source.iloc[:20].copy()
+    calibration_labels = labels[:20]
+    monkeypatch.setattr(
+        experiments,
+        "adaptation_weights",
+        lambda source_values, target_values: np.full(len(source_values), 0.1),
+    )
+
+    result = predict_adapted_probabilities(
+        source,
+        labels,
+        calibration,
+        calibration_labels,
+        source.iloc[20:40],
+        target,
+        method="A0+A3",
+        seed=402,
+    )
+
+    assert result["failed"] is True
+    assert result["status"] == "failed"
+    assert result["weight_diagnostics"]["degenerate_flag"] is True
+
+
+def test_raw_a3_uses_normalized_importance_weights(monkeypatch):
+    import cohortshift.experiments as experiments
+
+    rng = np.random.default_rng(128)
+    source = pd.DataFrame(rng.normal(size=(60, 5)), columns=list("abcde"))
+    target = pd.DataFrame(rng.normal(size=(12, 5)), columns=list("abcde"))
+    labels = np.tile([0, 1], 30)
+    captured = {}
+    unnormalized_weights = np.linspace(0.5, 1.5, len(source))
+
+    monkeypatch.setattr(
+        experiments,
+        "adaptation_weights",
+        lambda source_values, target_values: unnormalized_weights.copy(),
+    )
+
+    def capture_fit(train_x, train_labels, **kwargs):
+        captured["weights"] = kwargs["sample_weights"]
+        return {}
+
+    monkeypatch.setattr(experiments, "_tuned_estimators", capture_fit)
+    result = predict_adapted_probabilities(
+        source,
+        labels,
+        source.iloc[:20],
+        labels[:20],
+        source.iloc[20:40],
+        target,
+        method="A3",
+        seed=402,
+    )
+
+    np.testing.assert_allclose(captured["weights"].mean(), 1.0)
+    np.testing.assert_allclose(
+        captured["weights"], unnormalized_weights / unnormalized_weights.mean()
+    )
+    assert result["failed"] is False
+    assert result["weight_diagnostics"]["degenerate_flag"] is False
+
+
+def test_cross_cohort_tables_are_deterministic_and_include_registered_outputs():
+    rng = np.random.default_rng(584)
+    calibration_labels = np.tile([0, 1], 30)
+    calibration_probabilities = np.clip(
+        expit((calibration_labels - 0.5) * 1.5 + rng.normal(size=60)),
+        0.02,
+        0.98,
+    )
+    source_test_labels = np.tile([0, 1], 30)
+    source_test_probabilities = np.clip(
+        expit((source_test_labels - 0.5) * 1.4 + rng.normal(size=60)),
+        0.02,
+        0.98,
+    )
+    target_labels = np.tile([0, 1], 30)
+    target_patients = [f"target-{index}" for index in range(len(target_labels))]
+    main_entries = []
+    repeat_entries = []
+    for method_index, method in enumerate(E3_METHODS):
+        predictions = {}
+        for model_index, model in enumerate(("logistic", "hist_gradient_boosting")):
+            target_probabilities = np.clip(
+                expit(
+                    (target_labels - 0.5) * 1.2
+                    + rng.normal(scale=1.0, size=len(target_labels))
+                    + (method_index + model_index) * 0.03
+                ),
+                0.02,
+                0.98,
+            )
+            calibrators = {
+                kind: _fit_calibrator(
+                    kind, calibration_probabilities, calibration_labels
+                )
+                for kind in ("none", "Platt", "isotonic")
+            }
+            predictions[model] = {
+                "hyperparameters": {"synthetic": True},
+                "calibrators": calibrators,
+                "source_calibration_probabilities": calibration_probabilities,
+                "source_test_probabilities": source_test_probabilities,
+                "target_probabilities": target_probabilities,
+            }
+        common = {
+            "method": method,
+            "outcome": "NPM1",
+            "failed": False,
+            "status": "ready",
+            "failure_reason": "",
+            "diagnostics": {
+                "domain_classifier_auroc_cv": 0.6,
+                "mean_gene_ks": 0.2,
+            },
+            "predictions": predictions,
+            "source_calibration_labels": calibration_labels,
+            "source_test_labels": source_test_labels,
+        }
+        main_entries.append(
+            {
+                **common,
+                "split_set": "registered_main_split",
+                "repeat": "registered_main_split",
+            }
+        )
+        repeat_entries.append(
+            {**common, "split_set": "20_repeats", "repeat": 1}
+        )
+    prediction_bundle = {
+        "outcome": "NPM1",
+        "target_samples": [f"target-sample-{index}" for index in range(60)],
+        "main": main_entries,
+        "repeats": repeat_entries,
+    }
+
+    first = _assemble_cross_cohort_tables(
+        prediction_bundle,
+        target_labels,
+        target_patients,
+        np.arange(len(target_labels)),
+        bootstrap_seed=117,
+    )
+    second = _assemble_cross_cohort_tables(
+        prediction_bundle,
+        target_labels,
+        target_patients,
+        np.arange(len(target_labels)),
+        bootstrap_seed=117,
+    )
+
+    for table_name in ("cross_cohort", "repeats", "conformal", "reliability"):
+        pd.testing.assert_frame_equal(first[table_name], second[table_name])
+    main_table = first["cross_cohort"]
+    assert len(main_table) == len(E3_METHODS) * 2 * 3
+    assert set(main_table["method"]) == set(E3_METHODS)
+    assert "frac_pred_at_clip_bounds" in main_table
+    assert "target_bootstrap_slope_fit_failed_or_gt5_fraction" in main_table
+    assert "target_brier_difference_a0_a1_minus_a0" in main_table
+    assert "target_coverage_ci_lower" in first["conformal"]
+    assert {"repeat", "median", "q1", "q3"}.issubset(
+        set(first["repeats"]["row_type"])
     )
 
 

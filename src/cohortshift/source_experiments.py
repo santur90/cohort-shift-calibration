@@ -143,6 +143,9 @@ def _metric_values(
         metrics["calibration_slope_fit_converged"] = not any(
             issubclass(warning.category, ConvergenceWarning) for warning in caught
         )
+        metrics["calibration_slope_fit_failed"] = not metrics[
+            "calibration_slope_fit_converged"
+        ]
     return metrics, bins
 
 
@@ -206,13 +209,33 @@ def _patient_splits(
 
 
 def _tuned_estimators(
-    train_expression: pd.DataFrame, train_labels: np.ndarray, *, seed: int
+    train_expression: pd.DataFrame,
+    train_labels: np.ndarray,
+    *,
+    seed: int,
+    scale_logistic: bool = True,
+    sample_weights: np.ndarray | None = None,
 ) -> dict[str, tuple[object, dict[str, object]]]:
     cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=seed + 2000)
+    logistic_estimator = (
+        source_logistic_pipeline(random_state=seed)
+        if scale_logistic
+        else LogisticRegression(
+            C=1.0,
+            max_iter=2000,
+            random_state=seed,
+            solver="lbfgs",
+        )
+    )
+    logistic_grid = (
+        SOURCE_LOGISTIC_GRID
+        if scale_logistic
+        else {"C": SOURCE_LOGISTIC_GRID["classifier__C"]}
+    )
     searches = {
         "logistic": (
-            source_logistic_pipeline(random_state=seed),
-            SOURCE_LOGISTIC_GRID,
+            logistic_estimator,
+            logistic_grid,
         ),
         "hist_gradient_boosting": (
             source_hist_gradient_boosting(random_state=seed),
@@ -230,7 +253,14 @@ def _tuned_estimators(
             n_jobs=1,
             error_score="raise",
         )
-        search.fit(train_expression, train_labels)
+        fit_parameters = {}
+        if sample_weights is not None:
+            fit_parameters[
+                "classifier__sample_weight"
+                if name == "logistic" and scale_logistic
+                else "sample_weight"
+            ] = sample_weights
+        search.fit(train_expression, train_labels, **fit_parameters)
         fitted[name] = (search.best_estimator_, search.best_params_)
     return fitted
 
@@ -515,10 +545,7 @@ def run_source_experiments(
                 metrics, bins = _metric_values(
                     test_y, calibrated_test, include_calibration=True
                 )
-                if (
-                    calibrator_name in {"Platt", "isotonic"}
-                    and metrics["frac_pred_at_clip_bounds"] > 0.05
-                ):
+                if metrics["frac_pred_at_clip_bounds"] > 0.05:
                     metrics["calibration_slope"] = np.nan
                     metrics["calibration_intercept"] = np.nan
                 e2_rows.append(

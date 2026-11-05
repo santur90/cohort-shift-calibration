@@ -7,97 +7,22 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
-from sklearn.base import clone
-from sklearn.linear_model import LogisticRegression
-from sklearn.model_selection import GridSearchCV, StratifiedKFold
-from sklearn.pipeline import Pipeline
 
 from .adapt import adaptation_weights, adapt_features
 from .conformal import conformal_coverage_metrics, conformal_quantile
 from .features import select_top_variance_genes
-from .models import (
-    SOURCE_HIST_GRADIENT_BOOSTING_GRID,
-    SOURCE_LOGISTIC_GRID,
-    source_hist_gradient_boosting,
-    source_logistic_pipeline,
-)
 from .shift import domain_classifier_auroc, per_gene_ks
 from .source_experiments import (
     _apply_calibrator,
     _fit_calibrator,
     _metric_values,
+    _tuned_estimators,
 )
 
-E3_METHODS = ("raw", "A0", "A0+A1", "A2", "A0+A3")
+E3_METHODS = ("raw", "A0", "A0+A1", "A2", "A3", "A0+A3")
 E3_CALIBRATORS = ("none", "Platt", "isotonic")
 E3_MODELS = ("logistic", "hist_gradient_boosting")
 E3_BOOTSTRAP_RESAMPLES = 2000
-
-
-def _tune_e3_models(
-    train_features: pd.DataFrame,
-    train_labels: np.ndarray,
-    *,
-    seed: int,
-    avoid_second_scaler: bool,
-) -> dict[str, tuple[object, dict[str, object]]]:
-    folds = min(5, int(np.bincount(np.asarray(train_labels, dtype=int)).min()))
-    if folds < 2:
-        raise ValueError("source training split needs at least two samples per class")
-    cv = StratifiedKFold(n_splits=folds, shuffle=True, random_state=seed)
-    logistic = (
-        LogisticRegression(
-            max_iter=2000, solver="lbfgs", random_state=seed
-        )
-        if avoid_second_scaler
-        else source_logistic_pipeline(random_state=seed)
-    )
-    logistic_grid = (
-        {"C": SOURCE_LOGISTIC_GRID["classifier__C"]}
-        if avoid_second_scaler
-        else SOURCE_LOGISTIC_GRID
-    )
-    estimators: dict[str, tuple[object, dict[str, object]]] = {}
-    searches = {
-        "logistic": (logistic, logistic_grid),
-        "hist_gradient_boosting": (
-            source_hist_gradient_boosting(random_state=seed),
-            SOURCE_HIST_GRADIENT_BOOSTING_GRID,
-        ),
-    }
-    for name, (estimator, grid) in searches.items():
-        search = GridSearchCV(
-            estimator,
-            grid,
-            scoring="roc_auc",
-            cv=cv,
-            refit=True,
-            n_jobs=1,
-            error_score="raise",
-        )
-        search.fit(train_features, train_labels)
-        estimators[name] = (search.best_estimator_, search.best_params_)
-    return estimators
-
-
-def _fit_e3_estimator(
-    estimator: object,
-    train_features: pd.DataFrame,
-    train_labels: np.ndarray,
-    weights: np.ndarray | None,
-) -> object:
-    fitted = clone(estimator)
-    if weights is None:
-        fitted.fit(train_features, train_labels)
-    elif isinstance(fitted, Pipeline):
-        fitted.fit(
-            train_features,
-            train_labels,
-            classifier__sample_weight=weights,
-        )
-    else:
-        fitted.fit(train_features, train_labels, sample_weight=weights)
-    return fitted
 
 
 def predict_adapted_probabilities(
@@ -142,7 +67,7 @@ def predict_adapted_probabilities(
     )
     weights = None
     weight_diagnostics: dict[str, float | bool | str] = {}
-    if method == "A0+A3":
+    if method in {"A3", "A0+A3"}:
         weights = adaptation_weights(train_x.to_numpy(), target_x.to_numpy())
         effective_sample_size = float(weights.sum() ** 2 / np.square(weights).sum())
         lower_fraction = float(np.isclose(weights, 0.1).mean())
@@ -169,6 +94,7 @@ def predict_adapted_probabilities(
             "clip_upper_bound": 10.0,
             "degenerate_flag": bool(reasons),
             "degenerate_note": "; ".join(reasons) if reasons else "No degeneracy criteria met",
+            "status": "failed" if reasons else "ready",
             "failure_reason": (
                 "A3 degenerate; registered classifier and clip were not changed"
                 if reasons
@@ -178,31 +104,30 @@ def predict_adapted_probabilities(
         if reasons:
             return {
                 "failed": True,
+                "status": "failed",
                 "failure_reason": weight_diagnostics["failure_reason"],
                 "weight_diagnostics": weight_diagnostics,
             }
         weights = weights / weights.mean()
-    estimators = _tune_e3_models(
+    estimators = _tuned_estimators(
         train_x,
         source_labels,
         seed=seed,
-        avoid_second_scaler=(method in {"A1", "A0+A1"}),
+        scale_logistic=method not in {"A1", "A0+A1"},
+        sample_weights=weights,
     )
-    fitted_models: dict[str, object] = {}
     predictions: dict[str, object] = {}
     for name, (estimator, parameters) in estimators.items():
-        fitted = _fit_e3_estimator(estimator, train_x, source_labels, weights)
-        fitted_models[name] = fitted
-        calibration_probability = fitted.predict_proba(calibration_x)[:, 1]
-        test_probability = fitted.predict_proba(test_x)[:, 1]
-        target_probability = fitted.predict_proba(target_x)[:, 1]
+        calibration_probability = estimator.predict_proba(calibration_x)[:, 1]
+        test_probability = estimator.predict_proba(test_x)[:, 1]
+        target_probability = estimator.predict_proba(target_x)[:, 1]
         calibrators = {
             kind: _fit_calibrator(kind, calibration_probability, calibration_labels)
             for kind in E3_CALIBRATORS
         }
         predictions[name] = {
             "hyperparameters": parameters,
-            "estimator": fitted,
+            "estimator": estimator,
             "calibrators": calibrators,
             "source_calibration_probabilities": calibration_probability,
             "source_test_probabilities": test_probability,
@@ -210,6 +135,7 @@ def predict_adapted_probabilities(
         }
     return {
         "failed": False,
+        "status": "ready",
         "predictions": predictions,
         "weight_diagnostics": weight_diagnostics,
         "adapted_target_features": target_x,
@@ -262,26 +188,6 @@ def prepare_cross_cohort_predictions(
         source_expression.columns
     ):
         raise ValueError("registered main gene list is empty or not in aligned data")
-    source_main = source_expression.loc[:, registered_main_genes]
-    target_main = target_expression.loc[:, registered_main_genes]
-    domain_diagnostics: dict[str, dict[str, float | str]] = {}
-    for method in E3_METHODS:
-        domain_method = "none" if method == "raw" else method
-        domain_auc = domain_classifier_auroc(
-            source_main, target_main, method=domain_method, seed=seed
-        )
-        gene_ks = per_gene_ks(source_main, target_main, method=domain_method)
-        domain_diagnostics[method] = {
-            "domain_classifier_auroc_cv": float(domain_auc),
-            "mean_gene_ks": float(gene_ks["ks_statistic"].mean()),
-            "domain_classifier_auroc_note": (
-                "unweighted; unchanged by construction (A3 weights are used for "
-                "model training)"
-                if method == "A0+A3"
-                else "unweighted"
-            ),
-        }
-
     def run_split(
         split_values: dict[str, str],
         *,
@@ -317,6 +223,26 @@ def prepare_cross_cohort_predictions(
         calibration_x = source_expression.loc[calibration_ids, genes]
         test_x = source_expression.loc[test_ids, genes]
         target_x = target_expression.loc[:, genes]
+        source_all_x = source_expression.loc[:, genes]
+        domain_diagnostics: dict[str, dict[str, float | str]] = {}
+        for method in E3_METHODS:
+            domain_method = "none" if method == "raw" else method
+            domain_auc = domain_classifier_auroc(
+                source_all_x, target_x, method=domain_method, seed=seed
+            )
+            gene_ks = per_gene_ks(
+                source_all_x, target_x, method=domain_method
+            )
+            domain_diagnostics[method] = {
+                "domain_classifier_auroc_cv": float(domain_auc),
+                "mean_gene_ks": float(gene_ks["ks_statistic"].mean()),
+                "domain_classifier_auroc_note": (
+                    "unweighted; unchanged by construction (A3 weights are used "
+                    "for model training)"
+                    if method in {"A3", "A0+A3"}
+                    else "unweighted"
+                ),
+            }
         train_y = source_labels.loc[train_ids].to_numpy(dtype=int)
         calibration_y = source_labels.loc[calibration_ids].to_numpy(dtype=int)
         test_y = source_labels.loc[test_ids].to_numpy(dtype=int)
@@ -340,6 +266,7 @@ def prepare_cross_cohort_predictions(
                     "method": method,
                     "outcome": outcome,
                     "failed": bool(result["failed"]),
+                    "status": result["status"],
                     "failure_reason": result.get("failure_reason", ""),
                     "diagnostics": diagnostics,
                     "predictions": result.get("predictions", {}),
@@ -379,7 +306,6 @@ def prepare_cross_cohort_predictions(
         "target_samples": target_expression.index.tolist(),
         "main": main_entries,
         "repeats": repeat_entries,
-        "domain_diagnostics": domain_diagnostics,
     }
 
 
@@ -407,16 +333,36 @@ def _bootstrap_metric_intervals(
     if len(unique_patients) != len(y):
         raise ValueError("target bootstrap requires one sample per patient")
     rng = np.random.default_rng(seed)
-    metric_names = ("auroc", "auprc", "brier", "ece", "calibration_intercept", "calibration_slope")
+    metric_names = (
+        "auroc",
+        "auprc",
+        "brier",
+        "ece",
+        "calibration_intercept",
+        "calibration_slope",
+    )
     draws: dict[str, list[float]] = {name: [] for name in metric_names}
+    slope_failure_or_gt5 = 0
     for _ in range(n_resamples):
         sampled_patients = rng.integers(0, len(unique_patients), len(unique_patients))
         indices = np.concatenate(
             [np.flatnonzero(patient_index == index) for index in sampled_patients]
         )
         if not len(indices) or len(np.unique(y[indices])) != 2:
+            slope_failure_or_gt5 += 1
             continue
-        metrics = _prediction_metrics(y[indices], p[indices])
+        try:
+            metrics = _prediction_metrics(y[indices], p[indices])
+        except (ValueError, FloatingPointError):
+            slope_failure_or_gt5 += 1
+            continue
+        slope_failure_or_gt5 += int(
+            not bool(metrics["calibration_slope_fit_converged"])
+            or float(metrics["calibration_slope"]) > 5
+        )
+        if float(metrics["frac_pred_at_clip_bounds"]) > 0.05:
+            metrics["calibration_slope"] = np.nan
+            metrics["calibration_intercept"] = np.nan
         for name in metric_names:
             value = float(metrics[name])
             if np.isfinite(value):
@@ -429,7 +375,51 @@ def _bootstrap_metric_intervals(
         else:
             intervals[f"{name}_ci_lower"] = float(np.quantile(values, 0.025))
             intervals[f"{name}_ci_upper"] = float(np.quantile(values, 0.975))
+    intervals["bootstrap_slope_fit_failed_or_gt5_fraction"] = (
+        slope_failure_or_gt5 / n_resamples
+    )
+    intervals["bootstrap_n_resamples"] = n_resamples
     return intervals
+
+
+def _paired_brier_bootstrap_difference(
+    labels: np.ndarray,
+    probabilities_a0: np.ndarray,
+    probabilities_a0_a1: np.ndarray,
+    patient_ids: list[str],
+    *,
+    seed: int,
+    n_resamples: int = E3_BOOTSTRAP_RESAMPLES,
+) -> dict[str, float]:
+    """Bootstrap the paired target Brier difference, A0+A1 minus A0."""
+    y = np.asarray(labels, dtype=int)
+    p_a0 = np.asarray(probabilities_a0, dtype=float)
+    p_a0_a1 = np.asarray(probabilities_a0_a1, dtype=float)
+    patients = np.asarray(patient_ids, dtype=str)
+    if not (len(y) == len(p_a0) == len(p_a0_a1) == len(patients)):
+        raise ValueError("paired bootstrap inputs must have equal lengths")
+    if len(set(patients)) != len(y):
+        raise ValueError("paired target bootstrap requires one sample per patient")
+    point_difference = float(
+        np.mean((y - p_a0_a1) ** 2) - np.mean((y - p_a0) ** 2)
+    )
+    rng = np.random.default_rng(seed)
+    differences = np.empty(n_resamples, dtype=float)
+    for draw in range(n_resamples):
+        indices = rng.integers(0, len(y), len(y))
+        differences[draw] = np.mean(
+            (y[indices] - p_a0_a1[indices]) ** 2
+            - (y[indices] - p_a0[indices]) ** 2
+        )
+    return {
+        "target_brier_difference_a0_a1_minus_a0": point_difference,
+        "target_brier_difference_a0_a1_minus_a0_ci_lower": float(
+            np.quantile(differences, 0.025)
+        ),
+        "target_brier_difference_a0_a1_minus_a0_ci_upper": float(
+            np.quantile(differences, 0.975)
+        ),
+    }
 
 
 def final_evaluation(
@@ -514,6 +504,14 @@ def _assemble_cross_cohort_tables(
                     "model": model_name,
                     "calibrator": calibrator_name,
                     "outcome": outcome,
+                    "status": "failed" if failed else "complete",
+                    "analysis_role": (
+                        "confirmatory"
+                        if model_name == "logistic"
+                        and calibrator_name == "none"
+                        and method in {"A0", "A0+A1"}
+                        else "exploratory"
+                    ),
                 }
                 if failed:
                     row = {
@@ -528,15 +526,16 @@ def _assemble_cross_cohort_tables(
                         row[f"target_{metric}"] = np.nan
                     if split_set == "registered_main_split":
                         main_rows.append(row)
-                        coverage_rows.append(
-                            {
-                                **identity,
-                                **diagnostics,
-                                "failure_reason": entry["failure_reason"],
-                            }
-                        )
                     else:
+                        row["row_type"] = "repeat"
                         repeat_rows.append(row)
+                    coverage_rows.append(
+                        {
+                            **identity,
+                            **diagnostics,
+                            "failure_reason": entry["failure_reason"],
+                        }
+                    )
                     continue
                 model_predictions = entry["predictions"][model_name]
                 calibrator = model_predictions["calibrators"][calibrator_name]
@@ -560,16 +559,10 @@ def _assemble_cross_cohort_tables(
                 source_metrics = _prediction_metrics(
                     source_test_labels, source_test_probabilities
                 )
-                if (
-                    calibrator_name in {"Platt", "isotonic"}
-                    and metrics["frac_pred_at_clip_bounds"] > 0.05
-                ):
+                if metrics["frac_pred_at_clip_bounds"] > 0.05:
                     metrics["calibration_slope"] = np.nan
                     metrics["calibration_intercept"] = np.nan
-                if (
-                    calibrator_name in {"Platt", "isotonic"}
-                    and source_metrics["frac_pred_at_clip_bounds"] > 0.05
-                ):
+                if source_metrics["frac_pred_at_clip_bounds"] > 0.05:
                     source_metrics["calibration_slope"] = np.nan
                     source_metrics["calibration_intercept"] = np.nan
                 source_calibration_labels = entry["source_calibration_labels"]
@@ -603,11 +596,7 @@ def _assemble_cross_cohort_tables(
                         for key, value in target_coverage.items()
                     },
                 }
-                if (
-                    split_set == "registered_main_split"
-                    and model_name == "logistic"
-                    and calibrator_name == "none"
-                ):
+                if split_set == "registered_main_split":
                     coverage_row.update(
                         _bootstrap_coverage_intervals(
                             target_labels,
@@ -617,6 +606,9 @@ def _assemble_cross_cohort_tables(
                             seed=bootstrap_seed,
                         )
                     )
+                    coverage_row["bootstrap_n_resamples"] = (
+                        E3_BOOTSTRAP_RESAMPLES
+                    )
                 coverage_rows.append(coverage_row)
                 row = {
                     **identity,
@@ -625,6 +617,9 @@ def _assemble_cross_cohort_tables(
                         model_predictions["hyperparameters"], sort_keys=True
                     ),
                     **{f"target_{key}": value for key, value in metrics.items()},
+                    "frac_pred_at_clip_bounds": metrics[
+                        "frac_pred_at_clip_bounds"
+                    ],
                     **{f"source_test_{key}": value for key, value in source_metrics.items()},
                     **{f"conformal_source_test_{key}": value for key, value in source_coverage.items()},
                     **{f"conformal_target_{key}": value for key, value in target_coverage.items()},
@@ -649,6 +644,7 @@ def _assemble_cross_cohort_tables(
                     split_set == "registered_main_split"
                     and model_name == "logistic"
                     and calibrator_name == "none"
+                    and method == "A0"
                 ):
                     row.update(
                         {
@@ -661,6 +657,13 @@ def _assemble_cross_cohort_tables(
                             ).items()
                         }
                     )
+                    row["target_bootstrap_n_resamples"] = (
+                        E3_BOOTSTRAP_RESAMPLES
+                    )
+                    if metrics["frac_pred_at_clip_bounds"] > 0.05:
+                        for metric in ("calibration_intercept", "calibration_slope"):
+                            row[f"target_{metric}_ci_lower"] = np.nan
+                            row[f"target_{metric}_ci_upper"] = np.nan
                 if split_set == "registered_main_split":
                     main_rows.append(row)
                     if model_name == "logistic" and calibrator_name == "none":
@@ -673,6 +676,7 @@ def _assemble_cross_cohort_tables(
                             )
                         )
                 else:
+                    row["row_type"] = "repeat"
                     repeat_rows.append(row)
                     key = (method, model_name, calibrator_name)
                     repeat_target_metrics.setdefault(key, []).append(
@@ -685,14 +689,47 @@ def _assemble_cross_cohort_tables(
                             if isinstance(value, (float, int))
                         }
                     )
+    primary_main_entries = {
+        str(entry["method"]): entry
+        for entry in main_entries
+        if entry["method"] in {"A0", "A0+A1"} and not entry["failed"]
+    }
+    if set(primary_main_entries) == {"A0", "A0+A1"}:
+        primary_probabilities = {}
+        for method, entry in primary_main_entries.items():
+            raw_probabilities = entry["predictions"]["logistic"][
+                "target_probabilities"
+            ]
+            primary_probabilities[method] = _apply_calibrator(
+                "none", None, raw_probabilities
+            )[target_indices]
+        paired_difference = _paired_brier_bootstrap_difference(
+            target_labels,
+            primary_probabilities["A0"],
+            primary_probabilities["A0+A1"],
+            target_patient_ids,
+            seed=bootstrap_seed,
+        )
+        for row in main_rows:
+            if (
+                row["model"] == "logistic"
+                and row["calibrator"] == "none"
+                and row["method"] in {"A0", "A0+A1"}
+            ):
+                row.update(paired_difference)
     for row in main_rows:
         key = (str(row["method"]), str(row["model"]), str(row["calibrator"]))
         metrics = repeat_target_metrics.get(key, [])
         source_metrics = repeat_source_metrics.get(key, [])
-        for metric in ("auroc", "auprc", "brier", "ece", "calibration_intercept", "calibration_slope"):
+        for metric in (
+            "auroc",
+            "auprc",
+            "brier",
+            "ece",
+            "calibration_intercept",
+            "calibration_slope",
+        ):
             values = [item[metric] for item in metrics if metric in item and np.isfinite(item[metric])]
-            row[f"target_repeat_mean_{metric}"] = float(np.mean(values)) if values else np.nan
-            row[f"target_repeat_sd_{metric}"] = float(np.std(values, ddof=1)) if len(values) > 1 else np.nan
             row[f"target_repeat_median_{metric}"] = float(np.median(values)) if values else np.nan
             row[f"target_repeat_q1_{metric}"] = float(np.quantile(values, 0.25)) if values else np.nan
             row[f"target_repeat_q3_{metric}"] = float(np.quantile(values, 0.75)) if values else np.nan
@@ -701,14 +738,6 @@ def _assemble_cross_cohort_tables(
                 for item in source_metrics
                 if metric in item and np.isfinite(item[metric])
             ]
-            row[f"source_repeat_mean_{metric}"] = (
-                float(np.mean(source_values)) if source_values else np.nan
-            )
-            row[f"source_repeat_sd_{metric}"] = (
-                float(np.std(source_values, ddof=1))
-                if len(source_values) > 1
-                else np.nan
-            )
             row[f"source_repeat_median_{metric}"] = (
                 float(np.median(source_values)) if source_values else np.nan
             )
@@ -718,6 +747,7 @@ def _assemble_cross_cohort_tables(
             row[f"source_repeat_q3_{metric}"] = (
                 float(np.quantile(source_values, 0.75)) if source_values else np.nan
             )
+    repeat_rows = _append_repeat_summaries(repeat_rows)
     return {
         "cross_cohort": pd.DataFrame(main_rows),
         "repeats": pd.DataFrame(repeat_rows),
@@ -763,6 +793,83 @@ def _bootstrap_coverage_intervals(
             (f"target_{metric}_ci_upper", 0.975),
         )
     }
+
+
+def _append_repeat_summaries(
+    repeat_rows: list[dict[str, object]],
+) -> list[dict[str, object]]:
+    """Append median and IQR summaries without combining main-split results."""
+    if not repeat_rows:
+        return []
+    frame = pd.DataFrame(repeat_rows)
+    identity_columns = (
+        "split_set",
+        "method",
+        "model",
+        "calibrator",
+        "outcome",
+        "analysis_role",
+    )
+    metric_columns = [
+        column
+        for column in frame.columns
+        if (
+            column.startswith("target_")
+            or column.startswith("source_test_")
+            or column.startswith("target_minus_source_test_")
+            or column.startswith("conformal_")
+            or column
+            in {
+                "frac_pred_at_clip_bounds",
+                "domain_classifier_auroc_cv",
+                "mean_gene_ks",
+                "effective_sample_size",
+                "weight_min",
+                "weight_median",
+                "max_weight",
+                "frac_weights_at_lower_clip",
+                "frac_weights_at_upper_clip",
+                "bootstrap_slope_fit_failed_or_gt5_fraction",
+            }
+        )
+        and pd.api.types.is_numeric_dtype(frame[column])
+    ]
+    summaries: list[dict[str, object]] = []
+    for _, group in frame.groupby(list(identity_columns), sort=True, dropna=False):
+        base = {
+            column: group.iloc[0][column]
+            for column in identity_columns
+            if column in group.columns
+        }
+        for statistic, quantile in (
+            ("median", 0.5),
+            ("q1", 0.25),
+            ("q3", 0.75),
+        ):
+            row: dict[str, object] = {
+                **base,
+                "repeat": statistic,
+                "row_type": statistic,
+                "n_repeats": int(group["repeat"].nunique()),
+                "status": (
+                    "failed"
+                    if group["status"].eq("failed").all()
+                    else "complete"
+                ),
+            }
+            for column in metric_columns:
+                values = (
+                    pd.to_numeric(group[column], errors="coerce")
+                    .astype(float)
+                    .dropna()
+                )
+                row[column] = (
+                    float(values.quantile(quantile)) if not values.empty else np.nan
+                )
+            summaries.append(row)
+    for row in repeat_rows:
+        row.setdefault("row_type", "repeat")
+    return [*repeat_rows, *summaries]
 
 
 def _equal_count_reliability_rows(

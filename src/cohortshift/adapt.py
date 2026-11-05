@@ -23,7 +23,7 @@ def adapt_features(
         source_features.columns
     ):
         raise ValueError("source training features must have identical ordered columns")
-    if method in {"none", "raw", "A0+A3"}:
+    if method in {"none", "raw", "A3", "A0+A3"}:
         target = target_features.copy()
         if method in {"A0+A3"}:
             target = _target_a0(target)

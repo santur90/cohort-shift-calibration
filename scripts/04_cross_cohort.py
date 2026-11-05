@@ -53,6 +53,11 @@ def main() -> int:
 
     source_expression = _read_matrix(required[0])
     target_expression = _read_matrix(required[1])
+    if len(target_expression) != 173:
+        raise ValueError(
+            "registered TCGA-LAML target expression must contain 173 samples; "
+            f"found {len(target_expression)}"
+        )
     source_label_frame = pd.read_csv(
         required[2],
         sep="\t",
@@ -62,6 +67,12 @@ def main() -> int:
     registered_main_split = pd.read_csv(
         required[5], sep="\t", dtype=str
     ).set_index("sample_id")["split"].to_dict()
+    main_split_counts = pd.Series(registered_main_split).value_counts().to_dict()
+    if main_split_counts != {"train": 256, "validation": 85, "test": 85}:
+        raise ValueError(
+            "registered Beat AML split must be 256/85/85; "
+            f"found {main_split_counts}"
+        )
     repeated_splits = pd.read_csv(required[6], sep="\t", dtype={"sample_id": str})
     selected_genes = pd.read_csv(required[7], sep="\t", dtype={"gene": str})
     repeat_genes = {
@@ -70,8 +81,14 @@ def main() -> int:
             selected_genes["split_set"] == "20_repeats"
         ].groupby("repeat", sort=True)
     }
-    if len(repeat_genes) != 20 or any(len(genes) != 2000 for genes in repeat_genes.values()):
-        raise ValueError("the saved E1/E2 repeated selections must contain 20 lists of 2,000 genes")
+    if len(repeat_genes) != 20 or any(
+        len(genes) != 2000 or len(set(genes)) != 2000
+        for genes in repeat_genes.values()
+    ):
+        raise ValueError(
+            "the saved E1/E2 repeated selections must contain 20 lists of "
+            "2,000 unique genes"
+        )
     main_gene_list = Path(
         PROCESSED / "source_train_top2000_genes.txt"
     ).read_text(encoding="utf-8").splitlines()
