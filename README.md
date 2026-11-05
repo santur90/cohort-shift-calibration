@@ -172,6 +172,15 @@ revision are disclosed below.
   split's own selected genes, reuse the source E1/E2 training helper, and
   report those registered bootstrap quantities. These are implementation
   corrections; no target results were consulted.
+- **E3/E4 reporting fixes (after viewing E3/E4 output):** populate the
+  registered 2,000-resample target bootstrap confidence intervals for every
+  complete main-split result row, not only the primary A0 row. Repeat
+  slope/intercept summaries report the number of valid repeats and show NA
+  summaries when fewer than 15 of 20 repeats have valid estimates under the
+  existing clip-bound rule. Coverage plots show 95% bootstrap confidence
+  intervals and positive- and negative-class coverage; reliability plots show
+  points with bin-count annotations rather than connecting bins. These are
+  reporting-only fixes; no method or setting changes.
 - **Split conformal:** use `alpha=0.1` and nonconformity
   `1 - p(true class)`. Compute the finite-sample corrected quantile from
   source CALIBRATION scores as rank
