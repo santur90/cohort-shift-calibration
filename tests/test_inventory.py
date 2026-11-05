@@ -134,13 +134,10 @@ def test_analysis_set_selection_and_target_dnmt3a_gate(tmp_path, capsys):
     beat_row = next(row for row in rows if row["cohort"] == "beat_aml")
     tcga_row = next(row for row in rows if row["cohort"] == "tcga_laml")
     assert beat_row["n_samples_with_rna_and_mutation_profiling"] == "6"
-    assert beat_row["n_samples_in_analysis_set"] == "3"
-    assert beat_row["n_patients"] == "3"
-    assert beat_row["selected_sample_ids"] == (
-        "aml_ohsu_2022_1_BA0001|aml_ohsu_2022_2_BA0003|"
-        "aml_ohsu_2022_3_BA0006"
-    )
-    assert beat_row["npm1_positive_count"] == "1"
+    assert beat_row["n_samples_in_analysis_set"] == "1"
+    assert beat_row["n_patients"] == "1"
+    assert beat_row["selected_sample_ids"] == "aml_ohsu_2022_1_BA0001"
+    assert beat_row["npm1_positive_count"] == "0"
     assert beat_row["dnmt3a_positive_count"] == "1"
     assert tcga_row["n_samples_with_rna_and_mutation_profiling"] == "2"
     assert tcga_row["n_patients"] == "2"

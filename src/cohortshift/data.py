@@ -3,8 +3,12 @@
 from __future__ import annotations
 
 import csv
+import re
 from pathlib import Path
-from typing import Iterator
+from typing import Iterable, Iterator, Literal
+
+import numpy as np
+import pandas as pd
 
 _HEADER_TOKENS = {
     "PATIENT_ID",
@@ -24,6 +28,10 @@ _ANNOTATION_COLUMNS = {
 }
 _BROAD_SEQUENCING_PANELS = {"WXS", "WGS", "WHOLE_EXOME", "WHOLE_GENOME"}
 _UNPROFILED_PANEL_VALUES = {"", "NA", "N/A", "NULL", "NONE"}
+_PATIENT_ID_SUFFIXES = {
+    "beat_aml": re.compile(r"_BA\d{4}$"),
+    "tcga_laml": re.compile(r"-03$"),
+}
 
 
 def _clean_header(fields: list[str]) -> list[str]:
@@ -111,6 +119,243 @@ def mutation_profile_samples(
             profiled[gene].add(sample)
             panel_names[gene].add(panel)
     return profiled, panel_names
+
+
+def load_expression_matrix(path: str | Path) -> pd.DataFrame:
+    """Load cBioPortal gene-by-sample expression as sample-by-gene values.
+
+    Duplicate normalized Hugo symbols are resolved by keeping the row with
+    highest mean expression across samples.
+    """
+    path = Path(path)
+    raw = pd.read_csv(path, sep="\t", comment="#", low_memory=False)
+    symbol_col = next(
+        (column for column in raw.columns if str(column).casefold() == "hugo_symbol"),
+        None,
+    )
+    if symbol_col is None:
+        raise ValueError(f"{path} has no Hugo_Symbol column")
+    sample_columns = matrix_sample_columns([str(column) for column in raw.columns])
+    if not sample_columns:
+        raise ValueError(f"{path} has no expression sample columns")
+
+    values = raw[sample_columns].apply(pd.to_numeric, errors="coerce")
+    symbols = raw[symbol_col].astype("string").str.strip().str.upper()
+    valid_symbols = (
+        symbols.notna()
+        & symbols.ne("")
+        & symbols.ne("NAN")
+        & symbols.ne("NA")
+    )
+    values = values.loc[valid_symbols].copy()
+    values.index = symbols.loc[valid_symbols]
+    means = values.mean(axis=1, skipna=True)
+    keep_indices = (
+        pd.DataFrame(
+            {
+                "symbol": values.index,
+                "mean": means.to_numpy(),
+                "position": range(len(values)),
+            }
+        )
+        .sort_values(["symbol", "mean", "position"], ascending=[True, False, True])
+        .drop_duplicates("symbol", keep="first")["position"]
+        .to_numpy()
+    )
+    deduplicated = values.iloc[keep_indices].copy()
+    deduplicated.index.name = "Hugo_Symbol"
+    if deduplicated.index.has_duplicates:
+        raise RuntimeError(f"Duplicate Hugo symbols remain in {path}")
+    return deduplicated.T.astype(float)
+
+
+def parse_patient_id(cohort: str, sample_id: str) -> str:
+    """Remove the preregistered trailing sample suffix for a cohort."""
+    try:
+        suffix = _PATIENT_ID_SUFFIXES[cohort]
+    except KeyError as error:
+        raise ValueError(f"Unknown cohort for patient ID parsing: {cohort}") from error
+    patient, count = suffix.subn("", sample_id)
+    if count != 1:
+        raise ValueError(
+            f"Sample ID {sample_id!r} does not match the registered "
+            f"{cohort} patient-ID suffix"
+        )
+    return patient
+
+
+def detect_apl_samples(
+    clinical_by_sample: dict[str, dict[str, str]],
+    structural_variant_rows: Iterable[dict[str, str]],
+) -> set[str]:
+    """Find APL samples from clinical diagnosis or PML-RARA structural variants."""
+    diagnosis_column = "CANCER_TYPE_DETAILED"
+    if clinical_by_sample and any(
+        diagnosis_column not in row for row in clinical_by_sample.values()
+    ):
+        raise ValueError(
+            f"Clinical sample records must include {diagnosis_column} to classify APL"
+        )
+
+    apl_samples = {
+        sample
+        for sample, row in clinical_by_sample.items()
+        if _is_apl_diagnosis(row.get(diagnosis_column, ""))
+    }
+
+    rows = list(structural_variant_rows)
+    if not rows:
+        return apl_samples
+    columns = {column.casefold(): column for column in rows[0]}
+    sample_column = columns.get("sample_id")
+    site1_column = columns.get("site1_hugo_symbol")
+    site2_column = columns.get("site2_hugo_symbol")
+    event_column = columns.get("event_info")
+    if sample_column is None or (
+        (site1_column is None or site2_column is None) and event_column is None
+    ):
+        raise ValueError(
+            "Structural-variant records must include Sample_Id and either "
+            "Site1_Hugo_Symbol/Site2_Hugo_Symbol or Event_Info"
+        )
+
+    for row in rows:
+        sample = row.get(sample_column, "").strip()
+        partners = {
+            row.get(column, "").strip().upper()
+            for column in (site1_column, site2_column)
+            if column is not None
+        }
+        event = row.get(event_column, "").casefold() if event_column else ""
+        if partners == {"PML", "RARA"} or "pml-rara" in event:
+            if sample:
+                apl_samples.add(sample)
+    return apl_samples
+
+
+def _is_apl_diagnosis(value: str) -> bool:
+    normalized = value.casefold()
+    return (
+        "acute promyelocytic" in normalized
+        or "pml-rara" in normalized
+        or re.search(r"\bapl\b", normalized) is not None
+    )
+
+
+def select_one_sample_per_patient(
+    cohort: str,
+    candidate_samples: set[str],
+    clinical_by_sample: dict[str, dict[str, str]],
+    *,
+    analysis_set: Literal["main", "e6a", "e6b"] = "main",
+    apl_samples: set[str] | None = None,
+) -> set[str]:
+    """Apply the registered cohort-specific one-sample-per-patient rule."""
+    if analysis_set not in {"main", "e6a", "e6b"}:
+        raise ValueError(f"Unknown analysis set: {analysis_set}")
+    if cohort not in {"beat_aml", "tcga_laml"}:
+        raise ValueError(f"Unknown cohort for sample selection: {cohort}")
+    if analysis_set == "e6a" and apl_samples is None:
+        raise ValueError("e6a selection requires APL sample IDs from clinical/SV data")
+
+    candidates = set(candidate_samples)
+    if analysis_set == "e6a":
+        candidates = {
+            sample
+            for sample in candidates
+            if clinical_by_sample[sample].get("ONCOTREE_CODE", "").strip() == "AML"
+            and sample not in apl_samples
+        }
+    if cohort == "beat_aml" and analysis_set in {"main", "e6a"}:
+        candidates = {
+            sample
+            for sample in candidates
+            if clinical_by_sample[sample].get(
+                "DISEASE_STAGE_AT_SPECIMEN_COLLECTION"
+            )
+            == "Initial Diagnosis"
+        }
+
+    by_patient: dict[str, list[str]] = {}
+    for sample in candidates:
+        by_patient.setdefault(parse_patient_id(cohort, sample), []).append(sample)
+
+    selected: set[str] = set()
+    for samples in by_patient.values():
+        if cohort == "beat_aml":
+            selected.add(
+                min(
+                    samples,
+                    key=lambda sample: (
+                        0
+                        if analysis_set == "e6b"
+                        and clinical_by_sample[sample].get(
+                            "DISEASE_STAGE_AT_SPECIMEN_COLLECTION"
+                        )
+                        == "Initial Diagnosis"
+                        else 1,
+                        _collection_time_key(
+                            clinical_by_sample[sample].get(
+                                "TIME_OF_SAMPLE_COLLECTION_RELATIVE_TO_INCLUSION", ""
+                            )
+                        ),
+                        sample,
+                    ),
+                )
+            )
+        else:
+            selected.add(min(samples))
+    return selected
+
+
+def _collection_time_key(value: str) -> tuple[int, float]:
+    cleaned = value.strip()
+    if cleaned.upper() in _UNPROFILED_PANEL_VALUES:
+        return (1, float("inf"))
+    try:
+        numeric_value = float(cleaned)
+    except ValueError as error:
+        raise ValueError(
+            "TIME_OF_SAMPLE_COLLECTION_RELATIVE_TO_INCLUSION must be numeric "
+            f"or missing; found {value!r}"
+        ) from error
+    if not np.isfinite(numeric_value):
+        raise ValueError(
+            "TIME_OF_SAMPLE_COLLECTION_RELATIVE_TO_INCLUSION must be finite; "
+            f"found {value!r}"
+        )
+    return (0, numeric_value)
+
+
+def split_patient_ids(
+    patient_ids: set[str], *, seed: int
+) -> dict[str, str]:
+    """Assign patients to deterministic 60/20/20 train/validation/test splits."""
+    ordered = sorted(patient_ids)
+    if not ordered:
+        raise ValueError("cannot split an empty patient set")
+    shuffled = np.random.default_rng(seed).permutation(ordered).tolist()
+    count = len(shuffled)
+    if count == 1:
+        counts = (1, 0, 0)
+    elif count == 2:
+        counts = (1, 0, 1)
+    else:
+        validation_count = max(1, int(np.floor(0.20 * count)))
+        test_count = max(1, int(np.floor(0.20 * count)))
+        counts = (count - validation_count - test_count, validation_count, test_count)
+    train_end = counts[0]
+    validation_end = train_end + counts[1]
+    return {
+        patient: (
+            "train"
+            if position < train_end
+            else "validation"
+            if position < validation_end
+            else "test"
+        )
+        for position, patient in enumerate(shuffled)
+    }
 
 
 def sample_id_format(values: list[str]) -> str:

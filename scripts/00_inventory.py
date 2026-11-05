@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import csv
-import math
 import re
 import sys
 from pathlib import Path
@@ -19,6 +18,7 @@ from cohortshift.data import (  # noqa: E402
     matrix_sample_columns,
     mutation_profile_panels,
     mutation_profile_samples,
+    select_one_sample_per_patient,
     sample_id_format,
 )
 from cohortshift.labels import (  # noqa: E402
@@ -143,25 +143,6 @@ def print_data_check_values(
         )
 
 
-def collection_time_key(value: str) -> tuple[int, float]:
-    cleaned = value.strip()
-    if cleaned.upper() in UNPROFILED_VALUES:
-        return (1, math.inf)
-    try:
-        numeric_value = float(cleaned)
-    except ValueError as error:
-        raise ValueError(
-            "TIME_OF_SAMPLE_COLLECTION_RELATIVE_TO_INCLUSION must be numeric "
-            f"or missing; found {value!r}"
-        ) from error
-    if not math.isfinite(numeric_value):
-        raise ValueError(
-            "TIME_OF_SAMPLE_COLLECTION_RELATIVE_TO_INCLUSION must be finite; "
-            f"found {value!r}"
-        )
-    return (0, numeric_value)
-
-
 def select_beat_aml_samples(
     candidates: set[str], records_by_sample: dict[str, dict[str, str]]
 ) -> set[str]:
@@ -218,32 +199,12 @@ def select_beat_aml_samples(
             f"SPECIMEN_GROUPS={row.get('SPECIMEN_GROUPS', '<blank>')}"
         )
 
-    by_patient: dict[str, list[str]] = {}
-    for sample in candidates:
-        by_patient.setdefault(patient_id("beat_aml", sample), []).append(sample)
-
-    selected: set[str] = set()
-    for samples in by_patient.values():
-        selected.add(
-            min(
-                samples,
-                key=lambda sample: (
-                    0
-                    if records_by_sample[sample][
-                        "DISEASE_STAGE_AT_SPECIMEN_COLLECTION"
-                    ]
-                    == "Initial Diagnosis"
-                    else 1,
-                    *collection_time_key(
-                        records_by_sample[sample][
-                            "TIME_OF_SAMPLE_COLLECTION_RELATIVE_TO_INCLUSION"
-                        ]
-                    ),
-                    sample,
-                ),
-            )
-        )
-    return selected
+    return select_one_sample_per_patient(
+        "beat_aml",
+        candidates,
+        records_by_sample,
+        analysis_set="main",
+    )
 
 
 def file_sample_format(path: Path, headers: list[str]) -> str:

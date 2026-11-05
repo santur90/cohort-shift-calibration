@@ -108,7 +108,10 @@ def main() -> int:
     candidates = set(expression.index) & set(records_by_sample)
     candidates &= set.intersection(*(profiled[gene] for gene in GENES))
     selected = select_one_sample_per_patient(
-        "beat_aml", candidates, records_by_sample
+        "beat_aml",
+        candidates,
+        records_by_sample,
+        analysis_set="e6b",
     )
     patient_by_sample = {
         sample: parse_patient_id("beat_aml", sample) for sample in candidates

@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Iterable, Mapping
+
+import pandas as pd
 
 _DIAGNOSIS_TERMS = re.compile(
     r"\b(diagnos\w*|initial|baseline|presentation|de novo|primary)\b", re.I
@@ -60,3 +63,41 @@ def mutation_labels(
         sample: int(sample in mutations) if sample in profiled_samples else None
         for sample in all_samples
     }
+
+
+def labels_from_maf_rows(
+    mutation_rows: Iterable[Mapping[str, str]],
+    genes: set[str],
+    samples: set[str],
+    profiled_samples: dict[str, set[str]],
+) -> pd.DataFrame:
+    """Build nullable gene labels from MAF rows and gene-profiled sample sets."""
+    positives = {gene: set() for gene in genes}
+    for row in mutation_rows:
+        gene = row.get("Hugo_Symbol", row.get("Gene", "")).strip().upper()
+        sample = row.get("Tumor_Sample_Barcode", row.get("SAMPLE_ID", "")).strip()
+        classification = row.get("Variant_Classification", "")
+        if (
+            gene in genes
+            and sample in samples
+            and sample in profiled_samples.get(gene, set())
+            and is_non_silent_variant(classification)
+        ):
+            positives[gene].add(sample)
+
+    labels: dict[str, pd.Series] = {}
+    for gene in sorted(genes):
+        covered = samples & profiled_samples.get(gene, set())
+        labels[gene] = pd.Series(
+            pd.array(
+                [
+                    1 if sample in positives[gene] else 0
+                    if sample in covered
+                    else pd.NA
+                    for sample in sorted(samples)
+                ],
+                dtype="Int8",
+            ),
+            index=sorted(samples),
+        )
+    return pd.DataFrame(labels)
