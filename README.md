@@ -8,6 +8,37 @@ and newer.
 
 This section is fixed before examining any target-cohort results.
 
+- **Main analysis set (Beat AML):** retain samples with both RNA-seq and
+  mutation profiling and
+  `DISEASE_STAGE_AT_SPECIMEN_COLLECTION == "Initial Diagnosis"`, then select
+  one sample per patient. Break ties by earliest
+  `TIME_OF_SAMPLE_COLLECTION_RELATIVE_TO_INCLUSION`, then lowest sample ID.
+  Patients without an Initial Diagnosis candidate are excluded; there is no
+  fallback to another stage.
+- **Rationale:** TCGA-LAML consists of untreated primary samples, so the source
+  main set is restricted to initial-diagnosis samples to match clinical state.
+  The decision was based only on the source-cohort stage composition (426 of
+  585 selected samples were initial diagnosis; 159 patients had no
+  initial-diagnosis sample).
+- **Decision timing:** E0 was first run on the 585-sample set using target
+  expression but no target labels and no model outputs; the analysis set was
+  then revised using source-cohort composition only.
+- **Composition:** non-AML samples remain in the main set, including 5 ALAL
+  samples among the 426 initial-diagnosis samples.
+- **APL definition (identical for both cohorts):** classify a sample as APL if
+  its clinical diagnosis contains an acute promyelocytic leukaemia label or
+  PML-RARA, or its structural-variant record has PML and RARA as the two
+  partner genes or reports a PML-RARA fusion. The Beat AML source check found
+  the SV columns `Sample_Id`, `NCBI_Build`, `Site1_Hugo_Symbol`,
+  `Site1_Description`, `Site2_Hugo_Symbol`, `SV_Status`, and `Event_Info`;
+  PML-RARA calls appear as `Site1_Hugo_Symbol = PML`,
+  `Site2_Hugo_Symbol = RARA`, and `Event_Info = PML-RARA Fusion`. The clinical
+  field is `CANCER_TYPE_DETAILED`, with observed APL value
+  `Acute promyelocytic leukaemia with t(15;17)(q22;q12); PML-RARA`.
+- **E6a (sensitivity analysis):** restrict to `ONCOTREE_CODE == "AML"` and
+  exclude APL samples in both cohorts; rerun E3/E4.
+- **E6b (exploratory):** add back the fallback samples selected by the
+  previous 585-sample rule; rerun E3/E4.
 - **Primary outcome:** NPM1 mutation status. Primary evaluation on TCGA-LAML
   uses Brier score, calibration intercept and slope, and AUROC.
 - **Secondary outcome:** DNMT3A mutation status, evaluated only if the
@@ -21,13 +52,7 @@ This section is fixed before examining any target-cohort results.
   `Nonstop_Mutation`. A sample without the gene's mutation profiling is
   unlabelled, not negative. The Beat AML clinical `NPM1` column is not used as
   an outcome label.
-- **Beat AML analysis unit:** retain samples with both RNA-seq and mutation
-  profiling, then select one sample per patient. Prefer
-  `DISEASE_STAGE_AT_SPECIMEN_COLLECTION == "Initial Diagnosis"`; print its
-  distinct values and cross-check candidate records against `IS_RELAPSE` and
-  `SPECIMEN_GROUPS`. Break ties by earliest
-  `TIME_OF_SAMPLE_COLLECTION_RELATIVE_TO_INCLUSION`, then lowest sample ID.
-  Patient ID is the sample ID without trailing `_BAxxxx` in Beat AML or
+- **Patient IDs:** the sample ID without trailing `_BAxxxx` in Beat AML or
   trailing `-03` in TCGA-LAML.
 - **Methods:** none (source-trained baseline); A1, per-cohort gene
   standardization; A2, within-sample gene-expression rank; and A3,
@@ -47,6 +72,11 @@ This section is fixed before examining any target-cohort results.
 - `scripts/00_inventory.py`: inspects local files and writes
   `results/tables/inventory.tsv` and the pre-model analysis counts in
   `results/tables/analysis_set.tsv`.
+- `scripts/01_prepare.py`: builds aligned expression matrices under ignored
+  `data/processed/`, final registered analysis-set labels, patient splits, and
+  source-train-only top-variance gene selection.
+- `scripts/02_e0_shift.py`: runs E0 domain-classifier AUROC, PCA overlap, and
+  per-gene KS diagnostics for the requested methods.
 - `config.tsv`: cohort IDs and RNA expression filenames.
 - `results/tables/` and `results/figures/`: generated outputs.
 
@@ -71,6 +101,8 @@ python3 -m venv .venv
 python -m pip install -e '.[dev]'
 make data
 make check-data
+make prepare
+make e0
 make run
 make test
 ```
@@ -78,6 +110,22 @@ make test
 `make check-data` is a lightweight pre-analysis check: it prints the requested
 clinical distinct values, candidate eligibility counts, and Beat AML
 diagnosis/relapse cross-check without calculating mutation outcomes.
+`make prepare` writes gzipped aligned matrices to the ignored `data/processed/`
+directory, `results/splits/` patient assignments and fixed seeds, and the final
+`analysis_set.tsv`. Patient splits are deterministic 60/20/20 train,
+validation, and test partitions (without label stratification); cohorts with
+fewer than three patients use only as many partitions as possible. The top
+2,000 genes are ranked by variance on Beat AML's training split only.
+Split and E0 random seeds are recorded in `results/splits/seeds.json`.
+Beat AML NPM1/DNMT3A positive counts by split are saved in
+`results/splits/beat_aml_split_counts.tsv`; no target-label split counts are
+written.
+`make e0` writes method-level metrics to `results/tables/e0_shift.tsv`,
+per-gene statistics to `results/tables/e0_gene_ks.tsv`, and one PCA overlap
+figure per method. Beat AML uses log2 RPKM while TCGA-LAML uses batch-corrected
+RSEM; this expression-unit difference is part of the shift and is reported as
+such. The domain classifier imputes missing values with training-fold medians;
+per-gene KS tests use the available measurements for each gene.
 `make run` fails clearly if the expected input files have not been fetched and
 writes the inventory and analysis-set counts.
 The inventory reports each file's parsed header and inferred identifier
