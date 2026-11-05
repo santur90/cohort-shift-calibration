@@ -26,6 +26,21 @@ def filter_jointly_complete_genes(
         (target_genes - shared_genes)
         | {gene for gene in shared_genes if not target[gene].notna().all()}
     )
+    source_only = len(source_genes - target_genes)
+    target_only = len(target_genes - source_genes)
+    missing_source = sum(
+        not source[gene].notna().all() for gene in shared_genes
+    )
+    missing_target = sum(
+        not target[gene].notna().all() for gene in shared_genes
+    )
+    missing_total = len(
+        {
+            gene
+            for gene in shared_genes
+            if not source[gene].notna().all() or not target[gene].notna().all()
+        }
+    )
     dropped_total = len((source_genes | target_genes) - complete_genes)
     return (
         source.loc[:, ordered_genes].copy(),
@@ -34,6 +49,13 @@ def filter_jointly_complete_genes(
             "source": dropped_source,
             "target": dropped_target,
             "total": dropped_total,
+            "source_only": source_only,
+            "target_only": target_only,
+            "not_shared_total": source_only + target_only,
+            "missing_source": missing_source,
+            "missing_target": missing_target,
+            "missing_total": missing_total,
+            "kept": len(complete_genes),
         },
     )
 

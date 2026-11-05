@@ -9,6 +9,7 @@ import json
 import sys
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -245,6 +246,24 @@ def main(analysis_set: str = "main") -> int:
         f"TCGA-LAML={dropped_genes['target']}, "
         f"total unique={dropped_genes['total']}"
     )
+    print(
+        "GENE AVAILABILITY not present in both cohorts: "
+        f"Beat AML only={dropped_genes['source_only']}, "
+        f"TCGA-LAML only={dropped_genes['target_only']}, "
+        f"total={dropped_genes['not_shared_total']}"
+    )
+    print(
+        "GENE AVAILABILITY shared but incomplete: "
+        f"Beat AML missing={dropped_genes['missing_source']}, "
+        f"TCGA-LAML missing={dropped_genes['missing_target']}, "
+        f"unique incomplete={dropped_genes['missing_total']}"
+    )
+    print(f"GENE AVAILABILITY kept in both cohorts={dropped_genes['kept']}")
+    if analysis_set == "main" and dropped_genes["kept"] != 14005:
+        raise ValueError(
+            "Expected 14,005 genes measured in every sample of both main "
+            f"analysis sets; found {dropped_genes['kept']}"
+        )
     for cohort, values in cohort_data.items():
         expression = values["expression"]
         values["expression"] = expression
@@ -458,6 +477,27 @@ def main(analysis_set: str = "main") -> int:
         f"Selected top-variance source-train genes: {len(selected_genes)} "
         f"from {len(source_train)} Beat AML training samples"
     )
+    for cohort, values in (
+        ("Beat AML", source["expression"].loc[:, selected_genes].to_numpy(dtype=float)),
+        (
+            "TCGA-LAML",
+            cohort_data["tcga_laml"]["expression"]
+            .loc[:, selected_genes]
+            .to_numpy(dtype=float),
+        ),
+    ):
+        flattened = values.ravel()
+        percentiles = np.percentile(flattened, [1, 50, 99])
+        print(
+            f"EXPRESSION {cohort} selected-2000 values: "
+            f"min={flattened.min():.6g}; "
+            f"p01={percentiles[0]:.6g}; "
+            f"p50={percentiles[1]:.6g}; "
+            f"p99={percentiles[2]:.6g}; "
+            f"max={flattened.max():.6g}; "
+            f"fraction_exact_zero={np.equal(flattened, 0).mean():.6g}; "
+            f"fraction_negative={np.less(flattened, 0).mean():.6g}"
+        )
     print(
         f"Wrote {analysis_path.relative_to(ROOT)} and split assignments "
         f"for analysis set {analysis_set}"

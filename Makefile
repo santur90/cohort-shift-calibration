@@ -1,6 +1,6 @@
 PYTHON ?= python3
 
-.PHONY: data run check-data check-selection prepare e0 smoke test
+.PHONY: data run check-data check-selection check-apl prepare e0 smoke test
 
 data:
 	bash scripts/fetch_data.sh
@@ -13,6 +13,9 @@ check-data:
 
 check-selection:
 	$(PYTHON) scripts/01_check_selection.py
+
+check-apl:
+	$(PYTHON) scripts/check_apl.py
 
 prepare:
 	$(PYTHON) scripts/01_prepare.py

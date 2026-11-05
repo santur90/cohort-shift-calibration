@@ -7,6 +7,7 @@ import pytest
 from cohortshift.adapt import adapt_features, adaptation_weights
 from cohortshift.conformal import conformal_quantile, prediction_sets
 from cohortshift.data import (
+    apl_evidence_samples,
     detect_apl_samples,
     find_header,
     iter_tsv,
@@ -200,6 +201,37 @@ def test_apl_detection_uses_clinical_and_structural_variant_evidence():
     }
 
 
+def test_apl_evidence_samples_returns_each_evidence_source():
+    clinical = {
+        "clinical-apl": {
+            "CANCER_TYPE_DETAILED": "Acute promyelocytic leukaemia; PML-RARA"
+        },
+        "clinical-normal": {"CANCER_TYPE_DETAILED": "Acute myeloid leukaemia"},
+    }
+    structural_variants = [
+        {
+            "Sample_Id": "sv-pair",
+            "Site1_Hugo_Symbol": "PML",
+            "Site2_Hugo_Symbol": "RARA",
+            "Event_Info": "",
+        },
+        {
+            "Sample_Id": "sv-event",
+            "Site1_Hugo_Symbol": "PML",
+            "Site2_Hugo_Symbol": "OTHER",
+            "Event_Info": "PML-RARA Fusion",
+        },
+    ]
+    columns, evidence = apl_evidence_samples(
+        clinical, structural_variants, cohort="beat_aml"
+    )
+    assert columns == list(structural_variants[0])
+    assert evidence["clinical_cancer_type_detailed"] == {"clinical-apl"}
+    assert evidence["sv_partner_genes"] == {"sv-pair"}
+    assert evidence["sv_event_info"] == {"sv-event"}
+    assert evidence["union"] == {"clinical-apl", "sv-pair", "sv-event"}
+
+
 def test_apl_detection_requires_nonempty_sv_file_and_matches_tcga_schema(capsys):
     clinical = {"TCGA-AB-2803-03": {"CANCER_TYPE_DETAILED": "Acute myeloid leukemia"}}
     with pytest.raises(ValueError, match="requires data_sv.txt"):
@@ -368,17 +400,36 @@ def test_feature_adaptation_and_constant_scale():
 
 def test_joint_complete_gene_filter_excludes_gene_missing_entirely_in_target():
     source = pd.DataFrame(
-        {"complete": [1.0, 2.0], "target_missing": [3.0, 4.0], "partial": [5.0, np.nan]}
+        {
+            "complete": [1.0, 2.0],
+            "target_missing": [3.0, 4.0],
+            "partial": [5.0, np.nan],
+            "source_only": [6.0, 7.0],
+        }
     )
     target = pd.DataFrame(
-        {"complete": [7.0, 8.0], "target_missing": [np.nan, np.nan], "partial": [9.0, 10.0]}
+        {
+            "complete": [7.0, 8.0],
+            "target_missing": [np.nan, np.nan],
+            "partial": [9.0, 10.0],
+            "target_only": [11.0, 12.0],
+        }
     )
     filtered_source, filtered_target, dropped = filter_jointly_complete_genes(
         source, target
     )
     assert filtered_source.columns.tolist() == ["complete"]
     assert filtered_target.columns.tolist() == ["complete"]
-    assert dropped == {"source": 1, "target": 1, "total": 2}
+    assert dropped["source"] == 2
+    assert dropped["target"] == 2
+    assert dropped["total"] == 4
+    assert dropped["source_only"] == 1
+    assert dropped["target_only"] == 1
+    assert dropped["not_shared_total"] == 2
+    assert dropped["missing_source"] == 1
+    assert dropped["missing_target"] == 1
+    assert dropped["missing_total"] == 2
+    assert dropped["kept"] == 1
     assert not filtered_source.isna().any().any()
     assert not filtered_target.isna().any().any()
 
@@ -444,17 +495,91 @@ def test_e0_reports_a3_weight_diagnostics_without_imputation(tmp_path):
     weights = domain_classifier_weights(source.to_numpy(), target.to_numpy())
     expected_ess = np.square(weights.sum()) / np.square(weights).sum()
     assert row["effective_sample_size"] == pytest.approx(expected_ess)
+    assert row["weight_min"] == pytest.approx(weights.min())
+    assert row["weight_median"] == pytest.approx(np.median(weights))
     assert row["max_weight"] == pytest.approx(weights.max())
+    assert row["frac_weights_at_lower_clip"] == pytest.approx(
+        np.isclose(weights, 0.1).mean()
+    )
+    assert row["frac_weights_at_upper_clip"] == pytest.approx(
+        np.isclose(weights, 10.0).mean()
+    )
     assert row["clip_lower_bound"] == pytest.approx(0.1)
     assert row["clip_upper_bound"] == pytest.approx(10.0)
     max_at_clip = np.isclose(weights.max(), 10.0)
     assert bool(row["max_weight_at_upper_clip"]) == max_at_clip
-    assert bool(row["degenerate_flag"]) == (
-        expected_ess < 0.1 * len(source) or max_at_clip
+    expected_degenerate = (
+        expected_ess < 0.1 * len(source)
+        or max_at_clip
+        or np.isclose(weights, 0.1).mean() >= 0.5
+        or np.isclose(weights, 10.0).mean() >= 0.5
+        or np.allclose(weights, weights[0])
     )
+    assert bool(row["degenerate_flag"]) == expected_degenerate
+    assert row["degenerate_note"]
     assert "unweighted; unchanged by construction" in row[
         "domain_classifier_auroc_note"
     ]
+
+
+def test_perfectly_separable_domain_classifier_is_flagged_degenerate(tmp_path):
+    source = pd.DataFrame(np.zeros((40, 4)), columns=list("abcd"))
+    target = pd.DataFrame(np.ones((40, 4)), columns=list("abcd"))
+    summary, _ = run_e0_shift(
+        source,
+        target,
+        methods=("A3",),
+        seed=11,
+        pca_output_dir=str(tmp_path),
+    )
+    row = summary.iloc[0]
+    assert bool(row["degenerate_flag"])
+    assert "all weights equal" in row["degenerate_note"]
+
+
+def test_all_lower_clip_a3_weights_are_flagged_degenerate(tmp_path, monkeypatch):
+    rng = np.random.default_rng(83)
+    source = pd.DataFrame(rng.normal(size=(40, 4)), columns=list("abcd"))
+    target = pd.DataFrame(rng.normal(loc=0.15, size=(40, 4)), columns=list("abcd"))
+
+    def lower_clip_weights(source_features, target_features, *, clip):
+        return np.full(len(source_features), clip[0])
+
+    monkeypatch.setattr(
+        "cohortshift.shift.domain_classifier_weights", lower_clip_weights
+    )
+    summary, _ = run_e0_shift(
+        source,
+        target,
+        methods=("A3",),
+        seed=3,
+        pca_output_dir=str(tmp_path),
+    )
+    row = summary.iloc[0]
+    assert row["weight_min"] == pytest.approx(0.1)
+    assert row["weight_median"] == pytest.approx(0.1)
+    assert row["frac_weights_at_lower_clip"] == pytest.approx(1.0)
+    assert bool(row["degenerate_flag"])
+    assert "at least 50% of weights at lower clip" in row["degenerate_note"]
+
+
+def test_a1_cv_uses_fold_local_standardization_and_preserves_old_metric(tmp_path):
+    rng = np.random.default_rng(42)
+    source = pd.DataFrame(rng.normal(size=(60, 6)), columns=list("abcdef"))
+    target = pd.DataFrame(
+        rng.normal(loc=2.0, scale=1.5, size=(60, 6)), columns=list("abcdef")
+    )
+    summary, _ = run_e0_shift(
+        source,
+        target,
+        methods=("A1",),
+        seed=5,
+        pca_output_dir=str(tmp_path),
+    )
+    row = summary.iloc[0]
+    assert np.isfinite(row["domain_classifier_auroc_cv"])
+    assert np.isfinite(row["domain_classifier_auroc_whole_data_standardized"])
+    assert "forces equal class means" in row["domain_classifier_auroc_note"]
 
 
 def test_conformal_quantile_and_prediction_sets():

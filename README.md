@@ -47,9 +47,15 @@ revision are disclosed below.
   sample of both cohorts are excluded before feature selection. This decision
   uses gene availability only, no labels or model results.
 - **A3 diagnostics:** report effective sample size (ESS), maximum weight, and
-  clip bound. The degenerate-weight flag is true when ESS is below 10% of N or
-  the maximum weight equals a clip bound. Report weighted domain AUROC, or
-  state that the unweighted AUROC is unchanged by construction.
+  clip bounds, minimum and median weights, and the fractions at each clip
+  bound. The degenerate-weight flag is true when ESS is below 10% of N, the
+  maximum weight reaches the upper clip, at least half the weights reach either
+  clip, or all weights are equal; the output records the reason. The domain
+  AUROC remains unweighted and unchanged by construction.
+- **A1 E0 domain AUROC:** fit per-cohort gene means and standard deviations
+  within each cross-validation training fold and apply them to its held-out
+  fold. Also report the prior whole-data-standardized AUROC separately; this
+  standardization forces equal class means and biases CV AUROC below 0.5.
 - **E6a (sensitivity analysis):** restrict to `ONCOTREE_CODE == "AML"` and
   exclude APL samples in both cohorts; rerun E3/E4.
 - **E6b (exploratory):** add back the fallback samples selected by the
@@ -116,6 +122,7 @@ python3 -m venv .venv
 python -m pip install -e '.[dev]'
 make data
 make check-data
+make check-apl
 make prepare
 make e0
 make run
@@ -125,6 +132,9 @@ make test
 `make check-data` is a lightweight pre-analysis check: it prints the requested
 clinical distinct values, candidate eligibility counts, and Beat AML
 diagnosis/relapse cross-check without calculating mutation outcomes.
+`make check-apl` is read-only and reports PML-RARA evidence counts from clinical
+diagnoses and structural variants for each full cohort and its main analysis
+set; it does not read mutation labels or write results.
 `make prepare` writes gzipped aligned matrices to the ignored `data/processed/`
 directory, `results/splits/` patient assignments and fixed seeds, and the final
 `analysis_set.tsv`. Beat AML patient splits are deterministic 60/20/20
@@ -132,7 +142,11 @@ train/validation/test partitions stratified on the registered source label;
 the TCGA-LAML split is not stratified using target labels. Cohorts with fewer
 than three patients use only as many partitions as possible. The top
 2,000 genes are ranked by variance on Beat AML's training split only, after
-excluding genes with any missing values in either cohort. Main patient splits
+excluding genes with any missing values in either cohort. Preparation reports
+genes absent from one cohort, shared genes incomplete in either cohort, and
+the number retained; the main analysis set requires exactly 14,005 retained
+genes. It also prints descriptive selected-gene expression summaries without
+using them to make decisions. Main patient splits
 are stratified by NPM1; a separate DNMT3A-stratified split is written for E7.
 Split and E0 random seeds are recorded in `results/splits/seeds.json`.
 Beat AML NPM1/DNMT3A positive counts by split are saved in
@@ -140,12 +154,17 @@ Beat AML NPM1/DNMT3A positive counts by split are saved in
 written.
 `make e0` writes method-level metrics to `results/tables/e0_shift.tsv`,
 per-gene statistics to `results/tables/e0_gene_ks.tsv`, and one PCA overlap
-figure per method. Beat AML uses log2 RPKM while TCGA-LAML uses batch-corrected
+figure per method. A1 domain AUROC uses fold-local per-cohort standardization;
+the separate whole-data-standardized AUROC is retained for comparison. The
+preparation step prints descriptive expression-value summaries for the
+selected 2,000 genes without using them to make decisions. Beat AML uses log2
+RPKM while TCGA-LAML uses batch-corrected
 RSEM; this expression-unit difference is part of the shift and is reported as
 such. Genes with any missing value in either cohort are excluded before
 feature selection, so E0 domain-classifier and PCA diagnostics do not impute
 expression values. E0's A3 summary reports the effective sample size, maximum
-weight, clip bound, and degenerate-weight status.
+weight, minimum and median weights, clip bounds, fractions at each clip, and
+degenerate-weight status with its reason.
 `make run` fails clearly if the expected input files have not been fetched and
 writes the inventory and analysis-set counts.
 The inventory reports each file's parsed header and inferred identifier

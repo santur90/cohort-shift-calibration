@@ -184,13 +184,13 @@ def parse_patient_id(cohort: str, sample_id: str) -> str:
     return patient
 
 
-def detect_apl_samples(
+def apl_evidence_samples(
     clinical_by_sample: dict[str, dict[str, str]],
     structural_variant_rows: Iterable[dict[str, str]] | None,
     *,
     cohort: str,
-) -> set[str]:
-    """Find APL samples from clinical diagnosis or PML-RARA structural variants."""
+) -> tuple[list[str], dict[str, set[str]]]:
+    """Return APL sample IDs by clinical and structural-variant evidence."""
     display_cohort = {
         "beat_aml": "Beat AML",
         "tcga_laml": "TCGA-LAML",
@@ -213,7 +213,6 @@ def detect_apl_samples(
         for sample, row in clinical_by_sample.items()
         if _is_apl_diagnosis(row.get(diagnosis_column, ""))
     }
-    apl_samples = set(clinical_apl_samples)
 
     rows = list(structural_variant_rows)
     if not rows:
@@ -230,10 +229,6 @@ def detect_apl_samples(
             "Structural-variant records must include Sample_Id and either "
             "Site1_Hugo_Symbol/Site2_Hugo_Symbol or Event_Info"
         )
-    print(
-        f"DATA CHECK {display_cohort} data_sv.txt columns: "
-        f"{' | '.join(rows[0])}"
-    )
 
     partner_samples: set[str] = set()
     event_samples: set[str] = set()
@@ -249,15 +244,40 @@ def detect_apl_samples(
             partner_samples.add(sample)
         if sample and "pml-rara" in event:
             event_samples.add(sample)
-    apl_samples.update(partner_samples | event_samples)
+    evidence = {
+        "clinical_cancer_type_detailed": clinical_apl_samples,
+        "sv_partner_genes": partner_samples,
+        "sv_event_info": event_samples,
+    }
+    evidence["union"] = set().union(*evidence.values())
+    return list(rows[0]), evidence
+
+
+def detect_apl_samples(
+    clinical_by_sample: dict[str, dict[str, str]],
+    structural_variant_rows: Iterable[dict[str, str]] | None,
+    *,
+    cohort: str,
+) -> set[str]:
+    """Find APL samples from clinical diagnosis or PML-RARA structural variants."""
+    display_cohort = {
+        "beat_aml": "Beat AML",
+        "tcga_laml": "TCGA-LAML",
+    }.get(cohort)
+    if display_cohort is None:
+        raise ValueError(f"Unknown cohort for APL detection: {cohort}")
+    columns, evidence = apl_evidence_samples(
+        clinical_by_sample, structural_variant_rows, cohort=cohort
+    )
+    print(f"DATA CHECK {display_cohort} data_sv.txt columns: {' | '.join(columns)}")
     print(
         f"DATA CHECK {display_cohort} PML-RARA sample counts: "
-        f"clinical_diagnosis={len(clinical_apl_samples)}; "
-        f"sv_partner_genes={len(partner_samples)}; "
-        f"sv_event_info={len(event_samples)}; "
-        f"combined={len(apl_samples)}"
+        f"clinical_diagnosis={len(evidence['clinical_cancer_type_detailed'])}; "
+        f"sv_partner_genes={len(evidence['sv_partner_genes'])}; "
+        f"sv_event_info={len(evidence['sv_event_info'])}; "
+        f"combined={len(evidence['union'])}"
     )
-    return apl_samples
+    return evidence["union"]
 
 
 def _is_apl_diagnosis(value: str) -> bool:

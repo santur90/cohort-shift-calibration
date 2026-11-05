@@ -51,6 +51,60 @@ def _adapt_domain_features(
     raise ValueError(f"Unknown E0 adaptation method: {method}")
 
 
+def _fold_cohort_standardize(
+    features: np.ndarray,
+    domains: np.ndarray,
+    fit_indices: np.ndarray,
+    transform_indices: np.ndarray,
+) -> np.ndarray:
+    transformed = np.empty(
+        (len(transform_indices), features.shape[1]), dtype=float
+    )
+    transform_domains = domains[transform_indices]
+    for domain in (0, 1):
+        fit_domain = fit_indices[domains[fit_indices] == domain]
+        transform_mask = transform_domains == domain
+        if not len(fit_domain):
+            raise ValueError("each domain-classifier fold needs both cohorts")
+        means = features[fit_domain].mean(axis=0)
+        scales = features[fit_domain].std(axis=0, ddof=0)
+        scales[scales == 0] = 1.0
+        transformed[transform_mask] = (
+            features[transform_indices[transform_mask]] - means
+        ) / scales
+    return transformed
+
+
+def _cross_validated_domain_auroc(
+    features: np.ndarray,
+    domains: np.ndarray,
+    *,
+    seed: int,
+    folds: int,
+    standardize_by_domain_in_fold: bool,
+) -> float:
+    fold_count = min(folds, int(np.bincount(domains).min()))
+    if fold_count < 2:
+        raise ValueError("at least two samples per cohort are required for CV AUROC")
+    splitter = StratifiedKFold(n_splits=fold_count, shuffle=True, random_state=seed)
+    aucs: list[float] = []
+    for train_indices, test_indices in splitter.split(features, domains):
+        train_features = features[train_indices]
+        test_features = features[test_indices]
+        if standardize_by_domain_in_fold:
+            train_features = _fold_cohort_standardize(
+                features, domains, train_indices, train_indices
+            )
+            test_features = _fold_cohort_standardize(
+                features, domains, train_indices, test_indices
+            )
+        classifier = _domain_classifier()
+        classifier.fit(train_features, domains[train_indices])
+        target_scores = classifier.predict_proba(test_features)[:, 1]
+        aucs.append(float(roc_auc_score(domains[test_indices], target_scores)))
+    return float(np.mean(aucs))
+
+
 def _source_density_weights(
     train_features: np.ndarray, train_domains: np.ndarray
 ) -> np.ndarray:
@@ -78,22 +132,53 @@ def domain_classifier_auroc(
     seed: int = 0,
     folds: int = 5,
 ) -> float:
-    """Unweighted cross-validated source-vs-target AUROC."""
+    """Unweighted cross-validated source-vs-target AUROC.
+
+    A1 cohort means and scales are fitted independently within each training
+    fold, then applied to that fold's held-out samples.
+    """
     _require_complete_expression(source, target)
+    if method == "A1":
+        features = np.vstack(
+            (source.to_numpy(dtype=float), target.to_numpy(dtype=float))
+        )
+        domains = np.r_[
+            np.zeros(len(source), dtype=int), np.ones(len(target), dtype=int)
+        ]
+        return _cross_validated_domain_auroc(
+            features,
+            domains,
+            seed=seed,
+            folds=folds,
+            standardize_by_domain_in_fold=True,
+        )
     source, target = _adapt_domain_features(source, target, method)
     features = np.vstack((source.to_numpy(dtype=float), target.to_numpy(dtype=float)))
     domains = np.r_[np.zeros(len(source), dtype=int), np.ones(len(target), dtype=int)]
-    fold_count = min(folds, int(np.bincount(domains).min()))
-    if fold_count < 2:
-        raise ValueError("at least two samples per cohort are required for CV AUROC")
-    splitter = StratifiedKFold(n_splits=fold_count, shuffle=True, random_state=seed)
-    aucs: list[float] = []
-    for train_indices, test_indices in splitter.split(features, domains):
-        classifier = _domain_classifier()
-        classifier.fit(features[train_indices], domains[train_indices])
-        target_scores = classifier.predict_proba(features[test_indices])[:, 1]
-        aucs.append(float(roc_auc_score(domains[test_indices], target_scores)))
-    return float(np.mean(aucs))
+    return _cross_validated_domain_auroc(
+        features,
+        domains,
+        seed=seed,
+        folds=folds,
+        standardize_by_domain_in_fold=False,
+    )
+
+
+def _whole_data_standardized_domain_auroc(
+    source: pd.DataFrame, target: pd.DataFrame, *, seed: int
+) -> float:
+    source_scaled, target_scaled = _adapt_domain_features(source, target, "A1")
+    features = np.vstack(
+        (source_scaled.to_numpy(dtype=float), target_scaled.to_numpy(dtype=float))
+    )
+    domains = np.r_[np.zeros(len(source), dtype=int), np.ones(len(target), dtype=int)]
+    return _cross_validated_domain_auroc(
+        features,
+        domains,
+        seed=seed,
+        folds=5,
+        standardize_by_domain_in_fold=False,
+    )
 
 
 def _weighted_ks(
@@ -256,11 +341,24 @@ def run_e0_shift(
                     method=method,
                     seed=seed,
                 ),
+                "domain_classifier_auroc_whole_data_standardized": (
+                    _whole_data_standardized_domain_auroc(
+                        source, target, seed=seed
+                    )
+                    if method == "A1"
+                    else np.nan
+                ),
                 "domain_classifier_auroc_note": (
                     "unweighted; unchanged by construction (A3 weights are used "
                     "for weighted KS only)"
                     if method == "A3"
-                    else "unweighted"
+                    else (
+                        "whole-data per-cohort standardization forces equal class "
+                        "means and biases CV AUROC below 0.5; retained separately "
+                        "for comparison"
+                        if method == "A1"
+                        else "unweighted"
+                    )
                 ),
                 "n_genes": len(gene_ks),
                 "n_genes_ks_tested": int(stats.notna().sum()),
@@ -276,20 +374,45 @@ def run_e0_shift(
             effective_sample_size = float(
                 np.square(a3_weights.sum()) / np.square(a3_weights).sum()
             )
+            weight_min = float(a3_weights.min())
+            weight_median = float(np.median(a3_weights))
             max_weight = float(a3_weights.max())
+            frac_at_lower_clip = float(
+                np.isclose(a3_weights, A3_WEIGHT_CLIP[0]).mean()
+            )
+            frac_at_upper_clip = float(
+                np.isclose(a3_weights, A3_WEIGHT_CLIP[1]).mean()
+            )
             max_weight_at_upper_clip = bool(
                 np.isclose(max_weight, A3_WEIGHT_CLIP[1])
             )
+            degeneracy_reasons = []
+            if effective_sample_size < 0.1 * len(source):
+                degeneracy_reasons.append("ESS below 10% of source N")
+            if max_weight_at_upper_clip:
+                degeneracy_reasons.append("maximum weight at upper clip")
+            if frac_at_lower_clip >= 0.5:
+                degeneracy_reasons.append("at least 50% of weights at lower clip")
+            if frac_at_upper_clip >= 0.5:
+                degeneracy_reasons.append("at least 50% of weights at upper clip")
+            if np.allclose(a3_weights, a3_weights[0]):
+                degeneracy_reasons.append("all weights equal")
             summary_rows[-1].update(
                 {
                     "effective_sample_size": effective_sample_size,
+                    "weight_min": weight_min,
+                    "weight_median": weight_median,
                     "max_weight": max_weight,
+                    "frac_weights_at_lower_clip": frac_at_lower_clip,
+                    "frac_weights_at_upper_clip": frac_at_upper_clip,
                     "clip_lower_bound": A3_WEIGHT_CLIP[0],
                     "clip_upper_bound": A3_WEIGHT_CLIP[1],
                     "max_weight_at_upper_clip": max_weight_at_upper_clip,
-                    "degenerate_flag": bool(
-                        effective_sample_size < 0.1 * len(source)
-                        or max_weight_at_upper_clip
+                    "degenerate_flag": bool(degeneracy_reasons),
+                    "degenerate_note": (
+                        "; ".join(degeneracy_reasons)
+                        if degeneracy_reasons
+                        else "No degeneracy criteria met"
                     ),
                 }
             )
@@ -297,11 +420,16 @@ def run_e0_shift(
             summary_rows[-1].update(
                 {
                     "effective_sample_size": np.nan,
+                    "weight_min": np.nan,
+                    "weight_median": np.nan,
                     "max_weight": np.nan,
+                    "frac_weights_at_lower_clip": np.nan,
+                    "frac_weights_at_upper_clip": np.nan,
                     "clip_lower_bound": np.nan,
                     "clip_upper_bound": np.nan,
                     "max_weight_at_upper_clip": None,
                     "degenerate_flag": None,
+                    "degenerate_note": "Not applicable",
                 }
             )
     return pd.DataFrame(summary_rows), pd.concat(ks_frames, ignore_index=True)
