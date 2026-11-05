@@ -23,6 +23,7 @@ _ANNOTATION_COLUMNS = {
     "END_POSITION",
 }
 _BROAD_SEQUENCING_PANELS = {"WXS", "WGS", "WHOLE_EXOME", "WHOLE_GENOME"}
+_UNPROFILED_PANEL_VALUES = {"", "NA", "N/A", "NULL", "NONE"}
 
 
 def _clean_header(fields: list[str]) -> list[str]:
@@ -72,15 +73,8 @@ def matrix_sample_columns(headers: list[str]) -> list[str]:
     ]
 
 
-def mutation_profile_samples(
-    path: str | Path, genes: set[str]
-) -> tuple[dict[str, set[str]], dict[str, set[str]]]:
-    """Map known broad-sequencing mutation profiles to target-gene coverage.
-
-    The cBioPortal gene-panel matrix is sample-oriented. A WXS/WGS panel is
-    treated as covering the requested exonic genes; unknown targeted-panel IDs
-    are not assumed to include them.
-    """
+def mutation_profile_panels(path: str | Path) -> dict[str, str]:
+    """Return each sample's mutations assay panel from the cBioPortal matrix."""
     headers = find_header(path)
     sample_col = next(
         (name for name in headers if name.upper() == "SAMPLE_ID"), None
@@ -92,11 +86,25 @@ def mutation_profile_samples(
         raise ValueError(
             f"{path} must have SAMPLE_ID and mutations columns for gene-panel profiling"
         )
+    return {
+        row[sample_col]: row[mutation_col].strip()
+        for row in iter_tsv(path)
+        if row.get(sample_col)
+    }
+
+
+def mutation_profile_samples(
+    path: str | Path, genes: set[str]
+) -> tuple[dict[str, set[str]], dict[str, set[str]]]:
+    """Map known broad-sequencing mutation profiles to target-gene coverage.
+
+    The cBioPortal gene-panel matrix is sample-oriented. A WXS/WGS panel is
+    treated as covering the requested exonic genes; unknown targeted-panel IDs
+    are not assumed to include them.
+    """
     profiled = {gene: set() for gene in genes}
     panel_names: dict[str, set[str]] = {gene: set() for gene in genes}
-    for row in iter_tsv(path):
-        sample = row.get(sample_col, "")
-        panel = row.get(mutation_col, "").strip()
+    for sample, panel in mutation_profile_panels(path).items():
         if not sample or panel.upper() not in _BROAD_SEQUENCING_PANELS:
             continue
         for gene in genes:

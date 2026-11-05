@@ -10,6 +10,24 @@ _DIAGNOSIS_TERMS = re.compile(
 _RELAPSE_TERMS = re.compile(
     r"\b(relaps\w*|recur\w*|progress\w*|refractory)\b", re.I
 )
+NON_SILENT_VARIANT_CLASSIFICATIONS = frozenset(
+    {
+        "Missense_Mutation",
+        "Nonsense_Mutation",
+        "Frame_Shift_Del",
+        "Frame_Shift_Ins",
+        "In_Frame_Del",
+        "In_Frame_Ins",
+        "Splice_Site",
+        "Translation_Start_Site",
+        "Nonstop_Mutation",
+    }
+)
+
+
+def is_non_silent_variant(classification: str) -> bool:
+    """Return whether a MAF variant classification is in the registered set."""
+    return classification in NON_SILENT_VARIANT_CLASSIFICATIONS
 
 
 def diagnosis_relapse_candidates(

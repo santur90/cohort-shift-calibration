@@ -42,13 +42,15 @@ fetch_study aml_ohsu_2022 \
   data_clinical_patient.txt \
   data_mrna_seq_rpkm.txt \
   data_mutations.txt \
-  data_gene_panel_matrix.txt
+  data_gene_panel_matrix.txt \
+  data_sv.txt
 
 fetch_study laml_tcga_pan_can_atlas_2018 \
   data_clinical_sample.txt \
   data_clinical_patient.txt \
   data_mrna_seq_v2_rsem.txt \
   data_mutations.txt \
-  data_gene_panel_matrix.txt
+  data_gene_panel_matrix.txt \
+  data_sv.txt
 
 echo "Public cBioPortal inputs saved under $RAW_DIR"

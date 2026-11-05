@@ -1,12 +1,15 @@
 PYTHON ?= python3
 
-.PHONY: data run smoke test
+.PHONY: data run check-data smoke test
 
 data:
 	bash scripts/fetch_data.sh
 
 run:
 	$(PYTHON) scripts/00_inventory.py
+
+check-data:
+	$(PYTHON) scripts/00_inventory.py --check-only
 
 smoke:
 	$(PYTHON) -c "import cohortshift; from cohortshift import data, labels, features, models, calibration, conformal, shift, adapt, experiments, plots; print('cohortshift imports OK')"

@@ -14,7 +14,12 @@ from cohortshift.data import (
     sample_id_format,
 )
 from cohortshift.features import cohort_standardize, within_sample_rank
-from cohortshift.labels import diagnosis_relapse_candidates, mutation_labels
+from cohortshift.labels import (
+    NON_SILENT_VARIANT_CLASSIFICATIONS,
+    diagnosis_relapse_candidates,
+    is_non_silent_variant,
+    mutation_labels,
+)
 from cohortshift.shift import domain_classifier_weights
 
 
@@ -71,6 +76,23 @@ def test_unprofiled_mutations_are_missing_not_negative():
         "s2": 0,
         "s3": None,
     }
+
+
+def test_non_silent_definition_is_exact_registered_set():
+    assert NON_SILENT_VARIANT_CLASSIFICATIONS == {
+        "Missense_Mutation",
+        "Nonsense_Mutation",
+        "Frame_Shift_Del",
+        "Frame_Shift_Ins",
+        "In_Frame_Del",
+        "In_Frame_Ins",
+        "Splice_Site",
+        "Translation_Start_Site",
+        "Nonstop_Mutation",
+    }
+    assert is_non_silent_variant("Missense_Mutation")
+    assert not is_non_silent_variant("Silent")
+    assert not is_non_silent_variant("missense_mutation")
 
 
 def test_feature_adaptation_and_constant_scale():

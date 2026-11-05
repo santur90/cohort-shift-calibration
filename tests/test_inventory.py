@@ -3,76 +3,147 @@ import importlib.util
 from pathlib import Path
 
 
-def test_inventory_counts_only_gene_profiled_mutations(tmp_path):
+def _write(study: Path, filename: str, text: str) -> None:
+    (study / filename).write_text(text, encoding="utf-8")
+
+
+def test_analysis_set_selection_and_target_dnmt3a_gate(tmp_path, capsys):
     root = Path(__file__).resolve().parents[1]
     script = root / "scripts" / "00_inventory.py"
     spec = importlib.util.spec_from_file_location("cohortshift_inventory", script)
     inventory = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(inventory)
 
-    study = tmp_path / "raw" / "fixture"
-    study.mkdir(parents=True)
-    (study / "data_clinical_sample.txt").write_text(
+    beat = tmp_path / "raw" / "aml_ohsu_2022"
+    tcga = tmp_path / "raw" / "laml_tcga_pan_can_atlas_2018"
+    beat.mkdir(parents=True)
+    tcga.mkdir(parents=True)
+
+    _write(
+        beat,
+        "data_clinical_sample.txt",
         "#Patient Identifier\n#Other sample attributes\n"
-        "#PATIENT_ID\tSAMPLE_ID\tTIMEPOINT\n"
-        "p1\ts1\tDiagnosis\np1\ts2\tRelapse\np2\ts3\tDiagnosis\n",
-        encoding="utf-8",
+        "#PATIENT_ID\tSAMPLE_ID\tCOHORT\tONCOTREE_CODE\tCANCER_TYPE_DETAILED\t"
+        "DISEASE_STAGE_AT_SPECIMEN_COLLECTION\tIS_RELAPSE\tSPECIMEN_GROUPS\t"
+        "TIME_OF_SAMPLE_COLLECTION_RELATIVE_TO_INCLUSION\tNPM1\n"
+        "p1\taml_ohsu_2022_1_BA0001\tA\tAML\tAML\tInitial Diagnosis\tFALSE\t"
+        "Initial Acute Leukemia Diagnosis\t5\tMutated\n"
+        "p1\taml_ohsu_2022_1_BA0002\tA\tAML\tAML\tRelapse\tTRUE\tRelapse\t1\tWildtype\n"
+        "p2\taml_ohsu_2022_2_BA0003\tB\tAML\tAML\tOther\tFALSE\tOther\t2\tWildtype\n"
+        "p2\taml_ohsu_2022_2_BA0004\tB\tAML\tAML\tOther\tFALSE\tOther\t2\tWildtype\n"
+        "p3\taml_ohsu_2022_3_BA0005\tC\tAML\tAML\tOther\tFALSE\tOther\t3\tWildtype\n"
+        "p3\taml_ohsu_2022_3_BA0006\tC\tAML\tAML\tOther\tFALSE\tOther\t1\tWildtype\n"
+        "p4\taml_ohsu_2022_4_BA0007\tD\tAML\tAML\tInitial Diagnosis\tFALSE\t"
+        "Initial Acute Leukemia Diagnosis\t0\tWildtype\n",
     )
-    (study / "data_clinical_patient.txt").write_text(
-        "#PATIENT_ID\tAGE\np1\t50\np2\t60\n", encoding="utf-8"
+    _write(
+        beat,
+        "data_clinical_patient.txt",
+        "#PATIENT_ID\tAGE\np1\t50\np2\t60\np3\t70\np4\t80\n",
     )
-    (study / "data_mrna_seq_rpkm.txt").write_text(
-        "Hugo_Symbol\tEntrez_Gene_Id\ts1\ts2\nNPM1\t1\t0.1\t0.2\n",
-        encoding="utf-8",
+    _write(
+        beat,
+        "data_mrna_seq_rpkm.txt",
+        "Hugo_Symbol\tEntrez_Gene_Id\taml_ohsu_2022_1_BA0001\t"
+        "aml_ohsu_2022_1_BA0002\taml_ohsu_2022_2_BA0003\t"
+        "aml_ohsu_2022_2_BA0004\taml_ohsu_2022_3_BA0005\t"
+        "aml_ohsu_2022_3_BA0006\taml_ohsu_2022_4_BA0007\n"
+        "NPM1\t1\t0.1\t0.2\t0.3\t0.4\t0.5\t0.6\t0.7\n",
     )
-    (study / "data_gene_panel_matrix.txt").write_text(
+    _write(
+        beat,
+        "data_gene_panel_matrix.txt",
         "SAMPLE_ID\tmutations\tgistic\n"
-        "s1\tWXS\tNA\ns2\tWXS\tNA\ns3\tNA\tNA\n",
-        encoding="utf-8",
+        "aml_ohsu_2022_1_BA0001\tWXS\tNA\n"
+        "aml_ohsu_2022_1_BA0002\tWXS\tNA\n"
+        "aml_ohsu_2022_2_BA0003\tWXS\tNA\n"
+        "aml_ohsu_2022_2_BA0004\tWXS\tNA\n"
+        "aml_ohsu_2022_3_BA0005\tWXS\tNA\n"
+        "aml_ohsu_2022_3_BA0006\tWXS\tNA\n"
+        "aml_ohsu_2022_4_BA0007\tNA\tNA\n",
     )
-    (study / "data_mutations.txt").write_text(
+    _write(
+        beat,
+        "data_mutations.txt",
         "Hugo_Symbol\tTumor_Sample_Barcode\tVariant_Classification\n"
-        "NPM1\ts1\tMissense_Mutation\n"
-        "NPM1\ts3\tMissense_Mutation\n"
-        "DNMT3A\ts1\tSilent\n",
-        encoding="utf-8",
+        "DNMT3A\taml_ohsu_2022_1_BA0001\tFrame_Shift_Del\n"
+        "NPM1\taml_ohsu_2022_1_BA0002\tMissense_Mutation\n"
+        "NPM1\taml_ohsu_2022_2_BA0003\tNonsense_Mutation\n"
+        "DNMT3A\taml_ohsu_2022_2_BA0004\tSilent\n"
+        "NPM1\taml_ohsu_2022_3_BA0005\tMissense_Mutation\n"
+        "NPM1\taml_ohsu_2022_4_BA0007\tMissense_Mutation\n",
+    )
+
+    _write(
+        tcga,
+        "data_clinical_sample.txt",
+        "#PATIENT_ID\tSAMPLE_ID\tONCOTREE_CODE\tSUBTYPE\n"
+        "t1\tTCGA-AA-0001-03\tAML\tSubtype 1\n"
+        "t2\tTCGA-AA-0002-03\tAML\tSubtype 2\n"
+        "t3\tTCGA-AA-0003-03\tAML\tSubtype 3\n",
+    )
+    _write(
+        tcga,
+        "data_clinical_patient.txt",
+        "#PATIENT_ID\tAGE\nt1\t50\nt2\t60\nt3\t70\n",
+    )
+    _write(
+        tcga,
+        "data_mrna_seq_v2_rsem.txt",
+        "Hugo_Symbol\tEntrez_Gene_Id\tTCGA-AA-0001-03\t"
+        "TCGA-AA-0002-03\tTCGA-AA-0003-03\nNPM1\t1\t0.1\t0.2\t0.3\n",
+    )
+    _write(
+        tcga,
+        "data_gene_panel_matrix.txt",
+        "SAMPLE_ID\tmutations\tgistic\n"
+        "TCGA-AA-0001-03\tWXS\tWXS\n"
+        "TCGA-AA-0002-03\tWXS\tWXS\n"
+        "TCGA-AA-0003-03\tNA\tWXS\n"
+        "TCGA-AA-9999-03\tWXS\tWXS\n",
+    )
+    _write(
+        tcga,
+        "data_mutations.txt",
+        "Hugo_Symbol\tTumor_Sample_Barcode\tVariant_Classification\n"
+        "DNMT3A\tTCGA-AA-0001-03\tFrame_Shift_Ins\n"
+        "DNMT3A\tTCGA-AA-9999-03\tMissense_Mutation\n"
+        "NPM1\tTCGA-AA-0002-03\tSplice_Site\n",
     )
     config = tmp_path / "config.tsv"
     config.write_text(
-        "cohort\tstudy_id\trna_file\nfixture\tfixture\tdata_mrna_seq_rpkm.txt\n",
+        "cohort\tstudy_id\trna_file\n"
+        "beat_aml\taml_ohsu_2022\tdata_mrna_seq_rpkm.txt\n"
+        "tcga_laml\tlaml_tcga_pan_can_atlas_2018\tdata_mrna_seq_v2_rsem.txt\n",
         encoding="utf-8",
     )
-    output = tmp_path / "inventory.tsv"
     inventory.CONFIG = config
     inventory.RAW_DIR = tmp_path / "raw"
-    inventory.OUT = output
+    inventory.OUT = tmp_path / "inventory.tsv"
+    inventory.ANALYSIS_OUT = tmp_path / "analysis_set.tsv"
 
     assert inventory.main() == 0
-    with output.open(newline="", encoding="utf-8") as handle:
+    printed = capsys.readouterr().out
+    assert "DATA CHECK Beat AML COHORT: A | B | C" in printed
+    assert "DATA CHECK Beat AML DISEASE_STAGE_AT_SPECIMEN_COLLECTION:" in printed
+    assert "DATA CHECK TCGA-LAML SUBTYPE: Subtype 1 | Subtype 2 | Subtype 3" in printed
+    assert "DATA CHECK Beat AML eligible stage / IS_RELAPSE / SPECIMEN_GROUPS:" in printed
+
+    with inventory.ANALYSIS_OUT.open(newline="", encoding="utf-8") as handle:
         rows = list(csv.DictReader(handle, delimiter="\t"))
-    summary = next(row for row in rows if row["record_type"] == "cohort_summary")
-    npm1 = next(
-        row for row in rows if row["record_type"] == "gene_panel" and row["gene"] == "NPM1"
+    beat_row = next(row for row in rows if row["cohort"] == "beat_aml")
+    tcga_row = next(row for row in rows if row["cohort"] == "tcga_laml")
+    assert beat_row["n_samples_with_rna_and_mutation_profiling"] == "6"
+    assert beat_row["n_samples_in_analysis_set"] == "3"
+    assert beat_row["n_patients"] == "3"
+    assert beat_row["selected_sample_ids"] == (
+        "aml_ohsu_2022_1_BA0001|aml_ohsu_2022_2_BA0003|"
+        "aml_ohsu_2022_3_BA0006"
     )
-    dnmt3a = next(
-        row
-        for row in rows
-        if row["record_type"] == "gene_panel" and row["gene"] == "DNMT3A"
-    )
-    sample_file = next(
-        row
-        for row in rows
-        if row["record_type"] == "file"
-        and row["file"] == "data_clinical_sample.txt"
-    )
-    assert (summary["sample_count"], summary["patient_count"], summary["rna_sample_count"]) == (
-        "3",
-        "2",
-        "2",
-    )
-    assert npm1["panel_covered"] == "true"
-    assert npm1["profiled_sample_count"] == "2"
-    assert npm1["positive_sample_count"] == "1"
-    assert dnmt3a["positive_sample_count"] == "0"
-    assert "TIMEPOINT" in sample_file["diagnosis_column_candidates"]
-    assert "TIMEPOINT" in sample_file["relapse_column_candidates"]
+    assert beat_row["npm1_positive_count"] == "1"
+    assert beat_row["dnmt3a_positive_count"] == "1"
+    assert tcga_row["n_samples_with_rna_and_mutation_profiling"] == "2"
+    assert tcga_row["n_patients"] == "2"
+    assert tcga_row["target_rna_sample_count"] == "3"
+    assert tcga_row["target_rna_dnmt3a_positive_count"] == "1"
+    assert tcga_row["dnmt3a_secondary_eligible"] == "false"
