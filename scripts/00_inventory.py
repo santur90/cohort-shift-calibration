@@ -45,7 +45,7 @@ BEAT_AML_DISTINCT_FIELDS = (
     "IS_RELAPSE",
     "SPECIMEN_GROUPS",
 )
-TCGA_DISTINCT_FIELDS = ("ONCOTREE_CODE", "SUBTYPE")
+TCGA_PATIENT_DISTINCT_FIELDS = ("SUBTYPE",)
 PATIENT_SUFFIXES = {
     "beat_aml": re.compile(r"_BA\d{4}$"),
     "tcga_laml": re.compile(r"-03$"),
@@ -123,21 +123,22 @@ def print_data_check_values(
     records: list[dict[str, str]],
     fields: tuple[str, ...],
     rows: list[dict[str, str]],
+    *,
+    headers: list[str],
+    file_name: str,
 ) -> None:
-    headers = set(records[0]) if records else set()
+    header_set = set(headers)
     for column in fields:
-        if column not in headers:
-            raise ValueError(
-                f"Expected clinical sample column {column!r} for {cohort_name}"
-            )
-        values = distinct_values(records, column)
-        printable = " | ".join(values)
+        if column not in header_set:
+            printable = "(column not present)"
+        else:
+            printable = " | ".join(distinct_values(records, column))
         print(f"DATA CHECK {DISPLAY_NAMES[cohort_name]} {column}: {printable}")
         rows.append(
             {
                 "cohort": cohort_name,
                 "record_type": "distinct_values",
-                "file": "data_clinical_sample.txt",
+                "file": file_name,
                 "notes": f"{column}={printable}",
             }
         )
@@ -147,11 +148,7 @@ def select_beat_aml_samples(
     candidates: set[str], records_by_sample: dict[str, dict[str, str]]
 ) -> set[str]:
     fields = (
-        "PATIENT_ID",
-        "SAMPLE_ID",
         "DISEASE_STAGE_AT_SPECIMEN_COLLECTION",
-        "IS_RELAPSE",
-        "SPECIMEN_GROUPS",
         "TIME_OF_SAMPLE_COLLECTION_RELATIVE_TO_INCLUSION",
     )
     for field in fields:
@@ -232,7 +229,23 @@ def file_headers(path: Path) -> list[str]:
 def main(check_only: bool = False) -> int:
     rows: list[dict[str, str]] = []
     analysis_rows: list[dict[str, str]] = []
-    for cohort in load_config():
+    cohorts = load_config()
+    for cohort in cohorts:
+        cohort_name = cohort["cohort"]
+        study_dir = RAW_DIR / cohort["study_id"]
+        for file_name in ("data_clinical_sample.txt", "data_clinical_patient.txt"):
+            path = study_dir / file_name
+            if not path.is_file():
+                raise FileNotFoundError(
+                    f"Missing required clinical file: {path.relative_to(ROOT)}"
+                )
+            headers = file_headers(path)
+            print(
+                f"DATA CHECK {DISPLAY_NAMES[cohort_name]} {file_name} columns: "
+                f"{' | '.join(headers)}"
+            )
+
+    for cohort in cohorts:
         cohort_name = cohort["cohort"]
         study_id = cohort["study_id"]
         study_dir = RAW_DIR / study_id
@@ -294,14 +307,33 @@ def main(check_only: bool = False) -> int:
         )
         if cohort_name == "beat_aml":
             print_data_check_values(
-                cohort_name, sample_records, BEAT_AML_DISTINCT_FIELDS, rows
+                cohort_name,
+                sample_records,
+                BEAT_AML_DISTINCT_FIELDS,
+                rows,
+                headers=sample_headers,
+                file_name="data_clinical_sample.txt",
             )
             analysis_samples = select_beat_aml_samples(
                 eligible_samples, records_by_sample
             )
         elif cohort_name == "tcga_laml":
             print_data_check_values(
-                cohort_name, sample_records, TCGA_DISTINCT_FIELDS, rows
+                cohort_name,
+                sample_records,
+                ("ONCOTREE_CODE",),
+                rows,
+                headers=sample_headers,
+                file_name="data_clinical_sample.txt",
+            )
+            patient_records = list(iter_tsv(paths["data_clinical_patient.txt"]))
+            print_data_check_values(
+                cohort_name,
+                patient_records,
+                TCGA_PATIENT_DISTINCT_FIELDS,
+                rows,
+                headers=patient_headers,
+                file_name="data_clinical_patient.txt",
             )
             analysis_samples = eligible_samples
         else:

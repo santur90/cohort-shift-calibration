@@ -8,7 +8,6 @@ from scipy.stats import ks_2samp
 from sklearn.decomposition import PCA
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import roc_auc_score
-from sklearn.impute import SimpleImputer
 from sklearn.model_selection import StratifiedKFold
 from sklearn.pipeline import Pipeline
 from sklearn.pipeline import make_pipeline
@@ -22,11 +21,26 @@ E0_METHODS = ("none", "A1", "A2", "A3")
 def _domain_classifier() -> Pipeline:
     return Pipeline(
         [
-            ("imputer", SimpleImputer(strategy="median")),
             ("scaler", StandardScaler()),
             ("classifier", LogisticRegression(C=1.0, max_iter=2000)),
         ]
     )
+
+
+def _impute_source_medians(
+    source: pd.DataFrame,
+    target: pd.DataFrame,
+    source_train: pd.DataFrame | None = None,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    reference = source if source_train is None else source_train
+    medians = reference.reindex(columns=source.columns).median(axis=0)
+    missing_medians = medians.index[medians.isna()].tolist()
+    if missing_medians:
+        raise ValueError(
+            "Cannot impute genes with no observed SOURCE-TRAIN values: "
+            + ", ".join(missing_medians[:10])
+        )
+    return source.fillna(medians), target.fillna(medians)
 
 
 def _adapt_domain_features(
@@ -67,8 +81,10 @@ def domain_classifier_auroc(
     method: str = "none",
     seed: int = 0,
     folds: int = 5,
+    source_train: pd.DataFrame | None = None,
 ) -> float:
     """Cross-validated source-vs-target AUROC, with optional A3 train weights."""
+    source, target = _impute_source_medians(source, target, source_train)
     source, target = _adapt_domain_features(source, target, method)
     features = np.vstack((source.to_numpy(dtype=float), target.to_numpy(dtype=float)))
     domains = np.r_[np.zeros(len(source), dtype=int), np.ones(len(target), dtype=int)]
@@ -120,12 +136,18 @@ def per_gene_ks(
     target: pd.DataFrame,
     *,
     method: str = "none",
+    source_train: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
     """Return one two-sample KS statistic per gene after the requested transform."""
     source, target = _adapt_domain_features(source, target, method)
     source_weights = pd.Series(1.0, index=source.index)
     if method == "A3":
-        combined = np.vstack((source.to_numpy(), target.to_numpy()))
+        imputed_source, imputed_target = _impute_source_medians(
+            source, target, source_train
+        )
+        combined = np.vstack(
+            (imputed_source.to_numpy(), imputed_target.to_numpy())
+        )
         domain = np.r_[np.zeros(len(source), dtype=int), np.ones(len(target), dtype=int)]
         source_weights = pd.Series(
             _source_density_weights(combined, domain)[: len(source)],
@@ -165,12 +187,13 @@ def save_pca_overlap_plot(
     *,
     method: str = "none",
     seed: int = 0,
+    source_train: pd.DataFrame | None = None,
 ) -> None:
     """Save an unsupervised PCA overlap plot for the requested adaptation."""
+    source, target = _impute_source_medians(source, target, source_train)
     source, target = _adapt_domain_features(source, target, method)
     values = np.vstack((source.to_numpy(dtype=float), target.to_numpy(dtype=float)))
-    imputed = SimpleImputer(strategy="median").fit_transform(values)
-    scaled = StandardScaler().fit_transform(imputed)
+    scaled = StandardScaler().fit_transform(values)
     coordinates = PCA(
         n_components=2, svd_solver="randomized", random_state=seed
     ).fit_transform(scaled)
@@ -214,6 +237,7 @@ def run_e0_shift(
     *,
     seed: int = 0,
     pca_output_dir: str = "results/figures",
+    source_train: pd.DataFrame | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Recompute E0 domain AUROC, PCA, and per-gene KS for each method."""
     if not methods:
@@ -223,7 +247,9 @@ def run_e0_shift(
     summary_rows = []
     ks_frames = []
     for method in methods:
-        gene_ks = per_gene_ks(source, target, method=method)
+        gene_ks = per_gene_ks(
+            source, target, method=method, source_train=source_train
+        )
         gene_ks.insert(0, "method", method)
         ks_frames.append(gene_ks)
         save_pca_overlap_plot(
@@ -232,6 +258,7 @@ def run_e0_shift(
             f"{pca_output_dir}/e0_pca_{method}.png",
             method=method,
             seed=seed,
+            source_train=source_train,
         )
         stats = gene_ks["ks_statistic"]
         summary_rows.append(
@@ -243,7 +270,11 @@ def run_e0_shift(
                 "source_missing_cells": int(source.isna().sum().sum()),
                 "target_missing_cells": int(target.isna().sum().sum()),
                 "domain_classifier_auroc_cv": domain_classifier_auroc(
-                    source, target, method=method, seed=seed
+                    source,
+                    target,
+                    method=method,
+                    seed=seed,
+                    source_train=source_train,
                 ),
                 "n_genes": len(gene_ks),
                 "n_genes_ks_tested": int(stats.notna().sum()),
@@ -252,6 +283,33 @@ def run_e0_shift(
                 "max_gene_ks": float(stats.max()) if stats.notna().any() else np.nan,
             }
         )
+        if method == "A3":
+            imputed_source, imputed_target = _impute_source_medians(
+                source, target, source_train
+            )
+            a3_weights = domain_classifier_weights(
+                imputed_source.to_numpy(), imputed_target.to_numpy()
+            )
+            effective_sample_size = float(
+                np.square(a3_weights.sum()) / np.square(a3_weights).sum()
+            )
+            summary_rows[-1].update(
+                {
+                    "effective_sample_size": effective_sample_size,
+                    "max_weight": float(a3_weights.max()),
+                    "degenerate_flag": bool(
+                        effective_sample_size < 0.1 * len(imputed_source)
+                    ),
+                }
+            )
+        else:
+            summary_rows[-1].update(
+                {
+                    "effective_sample_size": np.nan,
+                    "max_weight": np.nan,
+                    "degenerate_flag": None,
+                }
+            )
     return pd.DataFrame(summary_rows), pd.concat(ks_frames, ignore_index=True)
 
 

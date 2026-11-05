@@ -187,7 +187,11 @@ def main(analysis_set: str = "main") -> int:
         if cohort == "beat_aml":
             _print_beat_cross_check(candidate_samples, clinical_by_sample)
         apl_samples = (
-            detect_apl_samples(clinical_by_sample, iter_tsv(structural_variant_path))
+            detect_apl_samples(
+                clinical_by_sample,
+                iter_tsv(structural_variant_path),
+                cohort=cohort,
+            )
             if analysis_set == "e6a"
             else None
         )

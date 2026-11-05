@@ -7,7 +7,7 @@ def _write(study: Path, filename: str, text: str) -> None:
     (study / filename).write_text(text, encoding="utf-8")
 
 
-def test_analysis_set_selection_and_target_dnmt3a_gate(tmp_path, capsys):
+def test_analysis_set_selection_and_optional_missing_subtype(tmp_path, capsys):
     root = Path(__file__).resolve().parents[1]
     script = root / "scripts" / "00_inventory.py"
     spec = importlib.util.spec_from_file_location("cohortshift_inventory", script)
@@ -77,10 +77,10 @@ def test_analysis_set_selection_and_target_dnmt3a_gate(tmp_path, capsys):
     _write(
         tcga,
         "data_clinical_sample.txt",
-        "#PATIENT_ID\tSAMPLE_ID\tONCOTREE_CODE\tSUBTYPE\n"
-        "t1\tTCGA-AA-0001-03\tAML\tSubtype 1\n"
-        "t2\tTCGA-AA-0002-03\tAML\tSubtype 2\n"
-        "t3\tTCGA-AA-0003-03\tAML\tSubtype 3\n",
+        "#PATIENT_ID\tSAMPLE_ID\tONCOTREE_CODE\n"
+        "t1\tTCGA-AA-0001-03\tAML\n"
+        "t2\tTCGA-AA-0002-03\tAML\n"
+        "t3\tTCGA-AA-0003-03\tAML\n",
     )
     _write(
         tcga,
@@ -124,9 +124,25 @@ def test_analysis_set_selection_and_target_dnmt3a_gate(tmp_path, capsys):
 
     assert inventory.main() == 0
     printed = capsys.readouterr().out
+    assert "DATA CHECK TCGA-LAML SUBTYPE: (column not present)" in printed
+    assert (
+        "DATA CHECK TCGA-LAML data_clinical_sample.txt columns: "
+        "PATIENT_ID | SAMPLE_ID | ONCOTREE_CODE"
+    ) in printed
+    assert (
+        "DATA CHECK TCGA-LAML data_clinical_patient.txt columns: "
+        "PATIENT_ID | AGE"
+    ) in printed
+    first_distinct_check = printed.index("DATA CHECK Beat AML COHORT:")
+    for header_line in (
+        "DATA CHECK Beat AML data_clinical_sample.txt columns:",
+        "DATA CHECK Beat AML data_clinical_patient.txt columns:",
+        "DATA CHECK TCGA-LAML data_clinical_sample.txt columns:",
+        "DATA CHECK TCGA-LAML data_clinical_patient.txt columns:",
+    ):
+        assert printed.index(header_line) < first_distinct_check
     assert "DATA CHECK Beat AML COHORT: A | B | C" in printed
     assert "DATA CHECK Beat AML DISEASE_STAGE_AT_SPECIMEN_COLLECTION:" in printed
-    assert "DATA CHECK TCGA-LAML SUBTYPE: Subtype 1 | Subtype 2 | Subtype 3" in printed
     assert "DATA CHECK Beat AML eligible stage / IS_RELAPSE / SPECIMEN_GROUPS:" in printed
 
     with inventory.ANALYSIS_OUT.open(newline="", encoding="utf-8") as handle:
@@ -144,3 +160,10 @@ def test_analysis_set_selection_and_target_dnmt3a_gate(tmp_path, capsys):
     assert tcga_row["target_rna_sample_count"] == "3"
     assert tcga_row["target_rna_dnmt3a_positive_count"] == "1"
     assert tcga_row["dnmt3a_secondary_eligible"] == "false"
+
+    assert inventory.main(check_only=True) == 0
+    check_output = capsys.readouterr().out
+    assert (
+        "DATA CHECK Beat AML: 6 RNA+mutation-profiled candidates, "
+        "1 analysis samples"
+    ) in check_output

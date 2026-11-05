@@ -186,9 +186,20 @@ def parse_patient_id(cohort: str, sample_id: str) -> str:
 
 def detect_apl_samples(
     clinical_by_sample: dict[str, dict[str, str]],
-    structural_variant_rows: Iterable[dict[str, str]],
+    structural_variant_rows: Iterable[dict[str, str]] | None,
+    *,
+    cohort: str,
 ) -> set[str]:
     """Find APL samples from clinical diagnosis or PML-RARA structural variants."""
+    display_cohort = {
+        "beat_aml": "Beat AML",
+        "tcga_laml": "TCGA-LAML",
+    }.get(cohort)
+    if display_cohort is None:
+        raise ValueError(f"Unknown cohort for APL detection: {cohort}")
+    if structural_variant_rows is None:
+        raise ValueError(f"{display_cohort} e6a requires data_sv.txt")
+
     diagnosis_column = "CANCER_TYPE_DETAILED"
     if clinical_by_sample and any(
         diagnosis_column not in row for row in clinical_by_sample.values()
@@ -197,15 +208,16 @@ def detect_apl_samples(
             f"Clinical sample records must include {diagnosis_column} to classify APL"
         )
 
-    apl_samples = {
+    clinical_apl_samples = {
         sample
         for sample, row in clinical_by_sample.items()
         if _is_apl_diagnosis(row.get(diagnosis_column, ""))
     }
+    apl_samples = set(clinical_apl_samples)
 
     rows = list(structural_variant_rows)
     if not rows:
-        return apl_samples
+        raise ValueError(f"{display_cohort} e6a requires non-empty data_sv.txt")
     columns = {column.casefold(): column for column in rows[0]}
     sample_column = columns.get("sample_id")
     site1_column = columns.get("site1_hugo_symbol")
@@ -218,7 +230,13 @@ def detect_apl_samples(
             "Structural-variant records must include Sample_Id and either "
             "Site1_Hugo_Symbol/Site2_Hugo_Symbol or Event_Info"
         )
+    print(
+        f"DATA CHECK {display_cohort} data_sv.txt columns: "
+        f"{' | '.join(rows[0])}"
+    )
 
+    partner_samples: set[str] = set()
+    event_samples: set[str] = set()
     for row in rows:
         sample = row.get(sample_column, "").strip()
         partners = {
@@ -227,9 +245,18 @@ def detect_apl_samples(
             if column is not None
         }
         event = row.get(event_column, "").casefold() if event_column else ""
-        if partners == {"PML", "RARA"} or "pml-rara" in event:
-            if sample:
-                apl_samples.add(sample)
+        if sample and partners == {"PML", "RARA"}:
+            partner_samples.add(sample)
+        if sample and "pml-rara" in event:
+            event_samples.add(sample)
+    apl_samples.update(partner_samples | event_samples)
+    print(
+        f"DATA CHECK {display_cohort} PML-RARA sample counts: "
+        f"clinical_diagnosis={len(clinical_apl_samples)}; "
+        f"sv_partner_genes={len(partner_samples)}; "
+        f"sv_event_info={len(event_samples)}; "
+        f"combined={len(apl_samples)}"
+    )
     return apl_samples
 
 
@@ -257,6 +284,27 @@ def select_one_sample_per_patient(
         raise ValueError(f"Unknown cohort for sample selection: {cohort}")
     if analysis_set == "e6a" and apl_samples is None:
         raise ValueError("e6a selection requires APL sample IDs from clinical/SV data")
+    required_columns = set()
+    if cohort == "beat_aml":
+        required_columns.update(
+            {
+                "DISEASE_STAGE_AT_SPECIMEN_COLLECTION",
+                "TIME_OF_SAMPLE_COLLECTION_RELATIVE_TO_INCLUSION",
+            }
+        )
+    if analysis_set == "e6a":
+        required_columns.add("ONCOTREE_CODE")
+    missing_columns = sorted(
+        column
+        for column in required_columns
+        if clinical_by_sample
+        and any(column not in row for row in clinical_by_sample.values())
+    )
+    if missing_columns:
+        raise ValueError(
+            f"{cohort} sample selection requires clinical columns: "
+            + ", ".join(missing_columns)
+        )
 
     candidates = set(candidate_samples)
     if analysis_set == "e6a":

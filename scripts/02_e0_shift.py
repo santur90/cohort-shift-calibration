@@ -22,8 +22,15 @@ def main(methods: tuple[str, ...]) -> int:
     source_path = PROCESSED_DIR / "aligned_beat_aml.tsv.gz"
     target_path = PROCESSED_DIR / "aligned_tcga_laml.tsv.gz"
     genes_path = PROCESSED_DIR / "source_train_top2000_genes.txt"
+    source_splits_path = ROOT / "results" / "splits" / "beat_aml_splits.tsv"
     seeds_path = ROOT / "results" / "splits" / "seeds.json"
-    required = (source_path, target_path, genes_path, seeds_path)
+    required = (
+        source_path,
+        target_path,
+        genes_path,
+        source_splits_path,
+        seeds_path,
+    )
     missing = [path for path in required if not path.is_file()]
     if missing:
         raise FileNotFoundError(
@@ -49,6 +56,22 @@ def main(methods: tuple[str, ...]) -> int:
         index_col="SAMPLE_ID",
         usecols=["SAMPLE_ID", *genes],
     ).loc[:, genes]
+    source_splits = pd.read_csv(
+        source_splits_path,
+        sep="\t",
+        usecols=["sample_id", "split"],
+        index_col="sample_id",
+    )
+    if source_splits.index.has_duplicates:
+        raise ValueError("Beat AML split file contains duplicate sample IDs")
+    source_train_samples = source_splits.index[source_splits["split"] == "train"]
+    missing_train_samples = set(source_train_samples) - set(source.index)
+    if not len(source_train_samples) or missing_train_samples:
+        raise ValueError(
+            "Beat AML training split is empty or references samples missing from "
+            "the aligned source matrix"
+        )
+    source_train = source.loc[source_train_samples, genes]
 
     summary, gene_ks = run_e0_shift(
         source,
@@ -56,6 +79,7 @@ def main(methods: tuple[str, ...]) -> int:
         methods,
         seed=seed,
         pca_output_dir=str(ROOT / "results" / "figures"),
+        source_train=source_train,
     )
     tables = ROOT / "results" / "tables"
     tables.mkdir(parents=True, exist_ok=True)

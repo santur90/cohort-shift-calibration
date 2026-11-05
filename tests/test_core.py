@@ -34,6 +34,8 @@ from cohortshift.shift import (
     domain_classifier_auroc,
     domain_classifier_weights,
     per_gene_ks,
+    run_e0_shift,
+    _impute_source_medians,
 )
 
 
@@ -100,10 +102,12 @@ def test_patient_id_parsing_and_registered_analysis_set_selection():
         "aml_ohsu_2022_2_BA0003": {
             "DISEASE_STAGE_AT_SPECIMEN_COLLECTION": "Other",
             "TIME_OF_SAMPLE_COLLECTION_RELATIVE_TO_INCLUSION": "2",
+            "ONCOTREE_CODE": "AML",
         },
         "aml_ohsu_2022_2_BA0004": {
             "DISEASE_STAGE_AT_SPECIMEN_COLLECTION": "Other",
             "TIME_OF_SAMPLE_COLLECTION_RELATIVE_TO_INCLUSION": "2",
+            "ONCOTREE_CODE": "AML",
         },
         "aml_ohsu_2022_3_BA0005": {
             "DISEASE_STAGE_AT_SPECIMEN_COLLECTION": "Initial Diagnosis",
@@ -186,11 +190,48 @@ def test_apl_detection_uses_clinical_and_structural_variant_evidence():
             "Event_Info": "PML-RARA Fusion",
         },
     ]
-    assert detect_apl_samples(clinical, iter(structural_variants)) == {
+    assert detect_apl_samples(
+        clinical, iter(structural_variants), cohort="beat_aml"
+    ) == {
         "clinical-apl",
         "sv-pair",
         "sv-event",
     }
+
+
+def test_apl_detection_requires_nonempty_sv_file_and_matches_tcga_schema(capsys):
+    clinical = {"TCGA-AB-2803-03": {"CANCER_TYPE_DETAILED": "Acute myeloid leukemia"}}
+    with pytest.raises(ValueError, match="requires data_sv.txt"):
+        detect_apl_samples(clinical, None, cohort="tcga_laml")
+    with pytest.raises(ValueError, match="non-empty data_sv.txt"):
+        detect_apl_samples(clinical, iter(()), cohort="tcga_laml")
+
+    tcga_sv_row = {
+        "Sample_Id": "TCGA-AB-2803-03",
+        "Site1_Hugo_Symbol": "PML",
+        "Site1_Chromosome": "15",
+        "Site1_Position": "74033414",
+        "Site2_Hugo_Symbol": "RARA",
+        "Site2_Chromosome": "17",
+        "Site2_Position": "40348316",
+        "Site2_Effect_On_Frame": "in-frame",
+        "SV_Status": "SOMATIC",
+        "Tumor_Split_Read_Count": "2",
+        "Tumor_Paired_End_Read_Count": "22",
+        "NCBI_Build": "GRCh37",
+        "Event_Info": "PML-RARA fusion",
+        "Center": "WashU",
+    }
+    assert detect_apl_samples(
+        clinical, [tcga_sv_row], cohort="tcga_laml"
+    ) == {"TCGA-AB-2803-03"}
+    output = capsys.readouterr().out
+    assert "Site2_Effect_On_Frame" in output
+    assert "DATA CHECK TCGA-LAML PML-RARA sample counts:" in output
+    assert (
+        "clinical_diagnosis=0; sv_partner_genes=1; "
+        "sv_event_info=1; combined=1"
+    ) in output
 
 
 def test_e6a_applies_aml_and_apl_filters_to_tcga():
@@ -351,6 +392,41 @@ def test_domain_classifier_auroc_is_chance_for_same_distribution():
     assert 0.4 <= weighted_auroc <= 0.6
     assert len(weighted_ks) == source.shape[1]
     assert weighted_ks["p_value"].isna().all()
+
+
+def test_e0_uses_source_train_medians_and_reports_a3_weight_diagnostics(tmp_path):
+    rng = np.random.default_rng(83)
+    source = pd.DataFrame(rng.normal(size=(40, 4)), columns=list("abcd"))
+    target = pd.DataFrame(rng.normal(loc=0.15, size=(40, 4)), columns=list("abcd"))
+    source.iloc[0, 0] = np.nan
+    target.iloc[1, 1] = np.nan
+    source_train = source.iloc[:24].copy()
+    expected_medians = source_train.median()
+
+    imputed_source, imputed_target = _impute_source_medians(
+        source, target, source_train
+    )
+    assert imputed_source.iloc[0, 0] == expected_medians["a"]
+    assert imputed_target.iloc[1, 1] == expected_medians["b"]
+
+    summary, _ = run_e0_shift(
+        source,
+        target,
+        methods=("A3",),
+        seed=3,
+        pca_output_dir=str(tmp_path),
+        source_train=source_train,
+    )
+    row = summary.iloc[0]
+    weights = domain_classifier_weights(
+        imputed_source.to_numpy(), imputed_target.to_numpy()
+    )
+    expected_ess = np.square(weights.sum()) / np.square(weights).sum()
+    assert row["effective_sample_size"] == pytest.approx(expected_ess)
+    assert row["max_weight"] == pytest.approx(weights.max())
+    assert bool(row["degenerate_flag"]) == (
+        expected_ess < 0.1 * len(imputed_source)
+    )
 
 
 def test_conformal_quantile_and_prediction_sets():

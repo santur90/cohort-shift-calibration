@@ -37,6 +37,17 @@ revision are disclosed below.
   `Site2_Hugo_Symbol = RARA`, and `Event_Info = PML-RARA Fusion`. The clinical
   field is `CANCER_TYPE_DETAILED`, with observed APL value
   `Acute promyelocytic leukaemia with t(15;17)(q22;q12); PML-RARA`.
+  The TCGA-LAML `data_sv.txt` schema is `Sample_Id`, `Site1_Hugo_Symbol`,
+  `Site1_Chromosome`, `Site1_Position`, `Site2_Hugo_Symbol`,
+  `Site2_Chromosome`, `Site2_Position`, `Site2_Effect_On_Frame`, `SV_Status`,
+  `Tumor_Split_Read_Count`, `Tumor_Paired_End_Read_Count`, `NCBI_Build`,
+  `Event_Info`, and `Center`. Public-file inspection found 23 Beat AML and 16
+  TCGA-LAML PML-RARA SV records by both partner-gene and event-info evidence.
+- **Missing expression values:** impute with SOURCE-TRAIN gene medians for
+  domain-classifier and PCA diagnostics. Per-gene KS statistics use observed
+  measurements. For A3, report effective sample size (ESS), maximum weight,
+  and a degenerate-weight flag; the flag is true when ESS is below 10% of the
+  source sample count.
 - **E6a (sensitivity analysis):** restrict to `ONCOTREE_CODE == "AML"` and
   exclude APL samples in both cohorts; rerun E3/E4.
 - **E6b (exploratory):** add back the fallback samples selected by the
@@ -126,8 +137,10 @@ written.
 per-gene statistics to `results/tables/e0_gene_ks.tsv`, and one PCA overlap
 figure per method. Beat AML uses log2 RPKM while TCGA-LAML uses batch-corrected
 RSEM; this expression-unit difference is part of the shift and is reported as
-such. The domain classifier imputes missing values with training-fold medians;
-per-gene KS tests use the available measurements for each gene.
+such. The domain classifier and PCA use source-training gene medians for
+missing-value imputation; per-gene KS tests use available measurements for
+each gene. E0's A3 summary also reports the effective sample size, maximum
+weight, and whether ESS is below 10% of the Beat AML source sample count.
 `make run` fails clearly if the expected input files have not been fetched and
 writes the inventory and analysis-set counts.
 The inventory reports each file's parsed header and inferred identifier
