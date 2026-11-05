@@ -16,6 +16,7 @@ from sklearn.preprocessing import StandardScaler
 from .features import cohort_standardize, within_sample_rank
 
 E0_METHODS = ("none", "A1", "A2", "A3")
+A3_WEIGHT_CLIP = (0.1, 10.0)
 
 
 def _domain_classifier() -> Pipeline:
@@ -27,20 +28,13 @@ def _domain_classifier() -> Pipeline:
     )
 
 
-def _impute_source_medians(
-    source: pd.DataFrame,
-    target: pd.DataFrame,
-    source_train: pd.DataFrame | None = None,
-) -> tuple[pd.DataFrame, pd.DataFrame]:
-    reference = source if source_train is None else source_train
-    medians = reference.reindex(columns=source.columns).median(axis=0)
-    missing_medians = medians.index[medians.isna()].tolist()
-    if missing_medians:
+def _require_complete_expression(
+    source: pd.DataFrame, target: pd.DataFrame
+) -> None:
+    if source.isna().any().any() or target.isna().any().any():
         raise ValueError(
-            "Cannot impute genes with no observed SOURCE-TRAIN values: "
-            + ", ".join(missing_medians[:10])
+            "E0 requires genes filtered to complete measurements in both cohorts"
         )
-    return source.fillna(medians), target.fillna(medians)
 
 
 def _adapt_domain_features(
@@ -70,7 +64,9 @@ def _source_density_weights(
     ratio = probability / np.maximum(1 - probability, 1e-8)
     ratio *= source_count / target_count
     weights = np.ones(len(train_domains), dtype=float)
-    weights[source_mask] = np.clip(ratio, 0.1, 10.0)
+    weights[source_mask] = np.clip(
+        ratio, A3_WEIGHT_CLIP[0], A3_WEIGHT_CLIP[1]
+    )
     return weights
 
 
@@ -81,10 +77,9 @@ def domain_classifier_auroc(
     method: str = "none",
     seed: int = 0,
     folds: int = 5,
-    source_train: pd.DataFrame | None = None,
 ) -> float:
-    """Cross-validated source-vs-target AUROC, with optional A3 train weights."""
-    source, target = _impute_source_medians(source, target, source_train)
+    """Unweighted cross-validated source-vs-target AUROC."""
+    _require_complete_expression(source, target)
     source, target = _adapt_domain_features(source, target, method)
     features = np.vstack((source.to_numpy(dtype=float), target.to_numpy(dtype=float)))
     domains = np.r_[np.zeros(len(source), dtype=int), np.ones(len(target), dtype=int)]
@@ -95,12 +90,7 @@ def domain_classifier_auroc(
     aucs: list[float] = []
     for train_indices, test_indices in splitter.split(features, domains):
         classifier = _domain_classifier()
-        fit_kwargs = {}
-        if method == "A3":
-            fit_kwargs["classifier__sample_weight"] = _source_density_weights(
-                features[train_indices], domains[train_indices]
-            )
-        classifier.fit(features[train_indices], domains[train_indices], **fit_kwargs)
+        classifier.fit(features[train_indices], domains[train_indices])
         target_scores = classifier.predict_proba(features[test_indices])[:, 1]
         aucs.append(float(roc_auc_score(domains[test_indices], target_scores)))
     return float(np.mean(aucs))
@@ -136,18 +126,13 @@ def per_gene_ks(
     target: pd.DataFrame,
     *,
     method: str = "none",
-    source_train: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
     """Return one two-sample KS statistic per gene after the requested transform."""
     source, target = _adapt_domain_features(source, target, method)
     source_weights = pd.Series(1.0, index=source.index)
     if method == "A3":
-        imputed_source, imputed_target = _impute_source_medians(
-            source, target, source_train
-        )
-        combined = np.vstack(
-            (imputed_source.to_numpy(), imputed_target.to_numpy())
-        )
+        _require_complete_expression(source, target)
+        combined = np.vstack((source.to_numpy(), target.to_numpy()))
         domain = np.r_[np.zeros(len(source), dtype=int), np.ones(len(target), dtype=int)]
         source_weights = pd.Series(
             _source_density_weights(combined, domain)[: len(source)],
@@ -187,10 +172,9 @@ def save_pca_overlap_plot(
     *,
     method: str = "none",
     seed: int = 0,
-    source_train: pd.DataFrame | None = None,
 ) -> None:
     """Save an unsupervised PCA overlap plot for the requested adaptation."""
-    source, target = _impute_source_medians(source, target, source_train)
+    _require_complete_expression(source, target)
     source, target = _adapt_domain_features(source, target, method)
     values = np.vstack((source.to_numpy(dtype=float), target.to_numpy(dtype=float)))
     scaled = StandardScaler().fit_transform(values)
@@ -237,19 +221,17 @@ def run_e0_shift(
     *,
     seed: int = 0,
     pca_output_dir: str = "results/figures",
-    source_train: pd.DataFrame | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Recompute E0 domain AUROC, PCA, and per-gene KS for each method."""
     if not methods:
         raise ValueError("at least one E0 method is required")
     if len(set(methods)) != len(methods):
         raise ValueError("E0 methods must not contain duplicates")
+    _require_complete_expression(source, target)
     summary_rows = []
     ks_frames = []
     for method in methods:
-        gene_ks = per_gene_ks(
-            source, target, method=method, source_train=source_train
-        )
+        gene_ks = per_gene_ks(source, target, method=method)
         gene_ks.insert(0, "method", method)
         ks_frames.append(gene_ks)
         save_pca_overlap_plot(
@@ -258,7 +240,6 @@ def run_e0_shift(
             f"{pca_output_dir}/e0_pca_{method}.png",
             method=method,
             seed=seed,
-            source_train=source_train,
         )
         stats = gene_ks["ks_statistic"]
         summary_rows.append(
@@ -274,7 +255,12 @@ def run_e0_shift(
                     target,
                     method=method,
                     seed=seed,
-                    source_train=source_train,
+                ),
+                "domain_classifier_auroc_note": (
+                    "unweighted; unchanged by construction (A3 weights are used "
+                    "for weighted KS only)"
+                    if method == "A3"
+                    else "unweighted"
                 ),
                 "n_genes": len(gene_ks),
                 "n_genes_ks_tested": int(stats.notna().sum()),
@@ -284,21 +270,26 @@ def run_e0_shift(
             }
         )
         if method == "A3":
-            imputed_source, imputed_target = _impute_source_medians(
-                source, target, source_train
-            )
             a3_weights = domain_classifier_weights(
-                imputed_source.to_numpy(), imputed_target.to_numpy()
+                source.to_numpy(), target.to_numpy(), clip=A3_WEIGHT_CLIP
             )
             effective_sample_size = float(
                 np.square(a3_weights.sum()) / np.square(a3_weights).sum()
             )
+            max_weight = float(a3_weights.max())
+            max_weight_at_upper_clip = bool(
+                np.isclose(max_weight, A3_WEIGHT_CLIP[1])
+            )
             summary_rows[-1].update(
                 {
                     "effective_sample_size": effective_sample_size,
-                    "max_weight": float(a3_weights.max()),
+                    "max_weight": max_weight,
+                    "clip_lower_bound": A3_WEIGHT_CLIP[0],
+                    "clip_upper_bound": A3_WEIGHT_CLIP[1],
+                    "max_weight_at_upper_clip": max_weight_at_upper_clip,
                     "degenerate_flag": bool(
-                        effective_sample_size < 0.1 * len(imputed_source)
+                        effective_sample_size < 0.1 * len(source)
+                        or max_weight_at_upper_clip
                     ),
                 }
             )
@@ -307,6 +298,9 @@ def run_e0_shift(
                 {
                     "effective_sample_size": np.nan,
                     "max_weight": np.nan,
+                    "clip_lower_bound": np.nan,
+                    "clip_upper_bound": np.nan,
+                    "max_weight_at_upper_clip": None,
                     "degenerate_flag": None,
                 }
             )
@@ -317,7 +311,7 @@ def domain_classifier_weights(
     source_features: np.ndarray,
     target_features: np.ndarray,
     *,
-    clip: tuple[float, float] = (0.1, 10.0),
+    clip: tuple[float, float] = A3_WEIGHT_CLIP,
 ) -> np.ndarray:
     """Estimate clipped target/source density ratios without target outcomes."""
     source = np.asarray(source_features, dtype=float)

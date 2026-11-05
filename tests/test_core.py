@@ -17,9 +17,11 @@ from cohortshift.data import (
     sample_id_format,
     select_one_sample_per_patient,
     split_patient_ids,
+    split_patient_ids_stratified,
 )
 from cohortshift.features import (
     cohort_standardize,
+    filter_jointly_complete_genes,
     select_top_variance_genes,
     within_sample_rank,
 )
@@ -35,7 +37,6 @@ from cohortshift.shift import (
     domain_classifier_weights,
     per_gene_ks,
     run_e0_shift,
-    _impute_source_medians,
 )
 
 
@@ -365,6 +366,23 @@ def test_feature_adaptation_and_constant_scale():
     assert select_top_variance_genes(values, n_genes=1) == ["a"]
 
 
+def test_joint_complete_gene_filter_excludes_gene_missing_entirely_in_target():
+    source = pd.DataFrame(
+        {"complete": [1.0, 2.0], "target_missing": [3.0, 4.0], "partial": [5.0, np.nan]}
+    )
+    target = pd.DataFrame(
+        {"complete": [7.0, 8.0], "target_missing": [np.nan, np.nan], "partial": [9.0, 10.0]}
+    )
+    filtered_source, filtered_target, dropped = filter_jointly_complete_genes(
+        source, target
+    )
+    assert filtered_source.columns.tolist() == ["complete"]
+    assert filtered_target.columns.tolist() == ["complete"]
+    assert dropped == {"source": 1, "target": 1, "total": 2}
+    assert not filtered_source.isna().any().any()
+    assert not filtered_target.isna().any().any()
+
+
 def test_adaptation_interfaces_do_not_accept_target_labels():
     assert "target_labels" not in inspect.signature(adapt_features).parameters
     assert "target_labels" not in inspect.signature(adaptation_weights).parameters
@@ -386,28 +404,34 @@ def test_domain_classifier_auroc_is_chance_for_same_distribution():
     auroc = domain_classifier_auroc(source, target, seed=7)
     assert 0.4 <= auroc <= 0.6
     source.iloc[0, 0] = np.nan
-    target.iloc[1, 1] = np.nan
-    weighted_auroc = domain_classifier_auroc(source, target, method="A3", seed=7)
-    weighted_ks = per_gene_ks(source, target, method="A3")
-    assert 0.4 <= weighted_auroc <= 0.6
-    assert len(weighted_ks) == source.shape[1]
-    assert weighted_ks["p_value"].isna().all()
+    with pytest.raises(ValueError, match="complete measurements"):
+        domain_classifier_auroc(source, target, method="A3", seed=7)
 
 
-def test_e0_uses_source_train_medians_and_reports_a3_weight_diagnostics(tmp_path):
+def test_patient_splits_stratify_on_source_label():
+    labels = {
+        **{f"positive-{index}": 1 for index in range(40)},
+        **{f"negative-{index}": 0 for index in range(60)},
+        **{f"unprofiled-{index}": None for index in range(5)},
+    }
+    assignments = split_patient_ids_stratified(labels, seed=19)
+    assert assignments == split_patient_ids_stratified(labels, seed=19)
+    for label in (0, 1):
+        counts = {
+            split: sum(
+                assignments[patient] == split and value == label
+                for patient, value in labels.items()
+            )
+            for split in ("train", "validation", "test")
+        }
+        assert all(counts[split] > 0 for split in counts)
+        assert sum(counts.values()) == sum(value == label for value in labels.values())
+
+
+def test_e0_reports_a3_weight_diagnostics_without_imputation(tmp_path):
     rng = np.random.default_rng(83)
     source = pd.DataFrame(rng.normal(size=(40, 4)), columns=list("abcd"))
     target = pd.DataFrame(rng.normal(loc=0.15, size=(40, 4)), columns=list("abcd"))
-    source.iloc[0, 0] = np.nan
-    target.iloc[1, 1] = np.nan
-    source_train = source.iloc[:24].copy()
-    expected_medians = source_train.median()
-
-    imputed_source, imputed_target = _impute_source_medians(
-        source, target, source_train
-    )
-    assert imputed_source.iloc[0, 0] == expected_medians["a"]
-    assert imputed_target.iloc[1, 1] == expected_medians["b"]
 
     summary, _ = run_e0_shift(
         source,
@@ -415,18 +439,22 @@ def test_e0_uses_source_train_medians_and_reports_a3_weight_diagnostics(tmp_path
         methods=("A3",),
         seed=3,
         pca_output_dir=str(tmp_path),
-        source_train=source_train,
     )
     row = summary.iloc[0]
-    weights = domain_classifier_weights(
-        imputed_source.to_numpy(), imputed_target.to_numpy()
-    )
+    weights = domain_classifier_weights(source.to_numpy(), target.to_numpy())
     expected_ess = np.square(weights.sum()) / np.square(weights).sum()
     assert row["effective_sample_size"] == pytest.approx(expected_ess)
     assert row["max_weight"] == pytest.approx(weights.max())
+    assert row["clip_lower_bound"] == pytest.approx(0.1)
+    assert row["clip_upper_bound"] == pytest.approx(10.0)
+    max_at_clip = np.isclose(weights.max(), 10.0)
+    assert bool(row["max_weight_at_upper_clip"]) == max_at_clip
     assert bool(row["degenerate_flag"]) == (
-        expected_ess < 0.1 * len(imputed_source)
+        expected_ess < 0.1 * len(source) or max_at_clip
     )
+    assert "unweighted; unchanged by construction" in row[
+        "domain_classifier_auroc_note"
+    ]
 
 
 def test_conformal_quantile_and_prediction_sets():

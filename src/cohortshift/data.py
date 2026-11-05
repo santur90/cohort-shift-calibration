@@ -406,6 +406,51 @@ def split_patient_ids(
     }
 
 
+def split_patient_ids_stratified(
+    labels_by_patient: dict[str, int | None], *, seed: int
+) -> dict[str, str]:
+    """Split patients 60/20/20 within each observed binary-label stratum."""
+    if not labels_by_patient:
+        raise ValueError("cannot split an empty patient-label mapping")
+    strata: dict[int | None, list[str]] = {0: [], 1: [], None: []}
+    for patient, label in labels_by_patient.items():
+        if label not in strata:
+            raise ValueError(f"Expected binary or missing label, got {label!r}")
+        strata[label].append(patient)
+
+    rng = np.random.default_rng(seed)
+    assignments: dict[str, str] = {}
+    for label in (0, 1, None):
+        patients = strata[label]
+        if not patients:
+            continue
+        shuffled = rng.permutation(sorted(patients)).tolist()
+        count = len(shuffled)
+        if count == 1:
+            split_counts = (1, 0, 0)
+        elif count == 2:
+            split_counts = (1, 0, 1)
+        else:
+            validation_count = max(1, int(np.floor(0.20 * count)))
+            test_count = max(1, int(np.floor(0.20 * count)))
+            split_counts = (
+                count - validation_count - test_count,
+                validation_count,
+                test_count,
+            )
+        train_end = split_counts[0]
+        validation_end = train_end + split_counts[1]
+        for position, patient in enumerate(shuffled):
+            assignments[patient] = (
+                "train"
+                if position < train_end
+                else "validation"
+                if position < validation_end
+                else "test"
+            )
+    return assignments
+
+
 def sample_id_format(values: list[str]) -> str:
     """Describe common identifier shape and provide a concrete example."""
     valid = [value for value in values if value]

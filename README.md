@@ -127,9 +127,10 @@ clinical distinct values, candidate eligibility counts, and Beat AML
 diagnosis/relapse cross-check without calculating mutation outcomes.
 `make prepare` writes gzipped aligned matrices to the ignored `data/processed/`
 directory, `results/splits/` patient assignments and fixed seeds, and the final
-`analysis_set.tsv`. Patient splits are deterministic 60/20/20 train,
-validation, and test partitions (without label stratification); cohorts with
-fewer than three patients use only as many partitions as possible. The top
+`analysis_set.tsv`. Beat AML patient splits are deterministic 60/20/20
+train/validation/test partitions stratified on the registered source label;
+the TCGA-LAML split is not stratified using target labels. Cohorts with fewer
+than three patients use only as many partitions as possible. The top
 2,000 genes are ranked by variance on Beat AML's training split only, after
 excluding genes with any missing values in either cohort. Main patient splits
 are stratified by NPM1; a separate DNMT3A-stratified split is written for E7.

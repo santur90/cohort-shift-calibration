@@ -5,6 +5,39 @@ from __future__ import annotations
 import pandas as pd
 
 
+def filter_jointly_complete_genes(
+    source: pd.DataFrame, target: pd.DataFrame
+) -> tuple[pd.DataFrame, pd.DataFrame, dict[str, int]]:
+    """Keep shared genes measured in every sample of both cohorts."""
+    source_genes = set(source.columns)
+    target_genes = set(target.columns)
+    shared_genes = source_genes & target_genes
+    complete_genes = {
+        gene
+        for gene in shared_genes
+        if source[gene].notna().all() and target[gene].notna().all()
+    }
+    ordered_genes = sorted(complete_genes)
+    dropped_source = len(
+        (source_genes - shared_genes)
+        | {gene for gene in shared_genes if not source[gene].notna().all()}
+    )
+    dropped_target = len(
+        (target_genes - shared_genes)
+        | {gene for gene in shared_genes if not target[gene].notna().all()}
+    )
+    dropped_total = len((source_genes | target_genes) - complete_genes)
+    return (
+        source.loc[:, ordered_genes].copy(),
+        target.loc[:, ordered_genes].copy(),
+        {
+            "source": dropped_source,
+            "target": dropped_target,
+            "total": dropped_total,
+        },
+    )
+
+
 def select_top_variance_genes(
     source_train: pd.DataFrame, n_genes: int = 2000
 ) -> list[str]:

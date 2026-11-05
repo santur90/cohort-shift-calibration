@@ -23,8 +23,12 @@ from cohortshift.data import (  # noqa: E402
     parse_patient_id,
     select_one_sample_per_patient,
     split_patient_ids,
+    split_patient_ids_stratified,
 )
-from cohortshift.features import select_top_variance_genes  # noqa: E402
+from cohortshift.features import (  # noqa: E402
+    filter_jointly_complete_genes,
+    select_top_variance_genes,
+)
 from cohortshift.labels import labels_from_maf_rows  # noqa: E402
 
 CONFIG = ROOT / "config.tsv"
@@ -224,15 +228,25 @@ def main(analysis_set: str = "main") -> int:
             "rna_matrix_samples": expression.shape[0],
         }
 
-    shared_genes = sorted(
-        set.intersection(
-            *(set(data["expression"].columns) for data in cohort_data.values())
+    source_expression, target_expression, dropped_genes = (
+        filter_jointly_complete_genes(
+            cohort_data["beat_aml"]["expression"],
+            cohort_data["tcga_laml"]["expression"],
         )
     )
-    if not shared_genes:
-        raise ValueError("The cohorts have no shared Hugo gene symbols")
+    if source_expression.shape[1] == 0:
+        raise ValueError("No genes are completely measured in both cohorts")
+    cohort_data["beat_aml"]["expression"] = source_expression
+    cohort_data["tcga_laml"]["expression"] = target_expression
+    shared_genes = source_expression.columns.tolist()
+    print(
+        "GENE AVAILABILITY dropped genes: "
+        f"Beat AML={dropped_genes['source']}, "
+        f"TCGA-LAML={dropped_genes['target']}, "
+        f"total unique={dropped_genes['total']}"
+    )
     for cohort, values in cohort_data.items():
-        expression = values["expression"].loc[:, shared_genes]
+        expression = values["expression"]
         values["expression"] = expression
         expression.to_csv(
             PROCESSED_DIR / f"aligned_{cohort}{artifact_suffix}.tsv.gz",
@@ -248,54 +262,100 @@ def main(analysis_set: str = "main") -> int:
 
     analysis_rows = []
     split_rows: dict[str, list[dict[str, str]]] = {}
+    dnmt3a_split_rows: list[dict[str, str]] = []
     beat_aml_split_counts: list[dict[str, str]] = []
     seed_info = {
         "analysis_set": analysis_set,
-        "strategy": "patient-level shuffled 60/20/20 train/validation/test",
-        "label_stratification": False,
-        "seeds": SEEDS,
+        "strategy": {
+            "beat_aml_main": "patient-level 60/20/20 stratified by NPM1",
+            "beat_aml_e7": "patient-level 60/20/20 stratified by DNMT3A",
+            "tcga_laml": "patient-level shuffled 60/20/20 without target-label stratification",
+        },
+        "label_stratification": {
+            "beat_aml_main": "NPM1",
+            "beat_aml_e7": "DNMT3A",
+            "tcga_laml": None,
+        },
+        "seeds": {
+            **SEEDS,
+            "beat_aml_e7_dnmt3a": SEEDS["beat_aml"] + 1,
+        },
         "e0_domain_cv_and_pca": E0_SEED,
     }
     for cohort, values in cohort_data.items():
         patients = values["patients"]
-        patient_splits = split_patient_ids(set(patients.values()), seed=SEEDS[cohort])
-        rows = []
-        for sample, patient in sorted(patients.items()):
-            rows.append(
+        labels = values["labels"]
+        if cohort == "beat_aml":
+            npm1_labels = {
+                patients[sample]: None if pd.isna(label) else int(label)
+                for sample, label in labels["NPM1"].items()
+            }
+            patient_splits = split_patient_ids_stratified(
+                npm1_labels, seed=SEEDS[cohort]
+            )
+            dnmt3a_labels = {
+                patients[sample]: None if pd.isna(label) else int(label)
+                for sample, label in labels["DNMT3A"].items()
+            }
+            dnmt3a_patient_splits = split_patient_ids_stratified(
+                dnmt3a_labels, seed=SEEDS[cohort] + 1
+            )
+            dnmt3a_split_rows = [
                 {
                     "cohort": cohort,
                     "sample_id": sample,
                     "patient_id": patient,
-                    "split": patient_splits[patient],
+                    "split": dnmt3a_patient_splits[patient],
                 }
+                for sample, patient in sorted(patients.items())
+            ]
+        else:
+            patient_splits = split_patient_ids(
+                set(patients.values()), seed=SEEDS[cohort]
             )
+        rows = [
+            {
+                "cohort": cohort,
+                "sample_id": sample,
+                "patient_id": patient,
+                "split": patient_splits[patient],
+            }
+            for sample, patient in sorted(patients.items())
+        ]
         split_rows[cohort] = rows
-        splits = {row["sample_id"]: row["split"] for row in rows}
 
-        labels = values["labels"]
         if cohort == "beat_aml":
-            for split in ("train", "validation", "test"):
-                samples = {
-                    sample for sample, assigned_split in splits.items()
-                    if assigned_split == split
+            for label_name, assigned_rows, gene in (
+                ("main", rows, "NPM1"),
+                ("e7_dnmt3a", dnmt3a_split_rows, "DNMT3A"),
+            ):
+                label_splits = {
+                    row["sample_id"]: row["split"] for row in assigned_rows
                 }
-                split_labels = labels.loc[sorted(samples)]
-                split_counts = {
-                    "split": split,
-                    "n_samples": str(len(samples)),
-                    "npm1_profiled_samples": str(_profiled_count(split_labels, "NPM1")),
-                    "npm1_positives": str(_positive_count(split_labels, "NPM1")),
-                    "dnmt3a_profiled_samples": str(_profiled_count(split_labels, "DNMT3A")),
-                    "dnmt3a_positives": str(_positive_count(split_labels, "DNMT3A")),
-                }
-                beat_aml_split_counts.append(split_counts)
-                print(
-                    f"SPLIT beat_aml {split}: N={split_counts['n_samples']}, "
-                    f"NPM1+={split_counts['npm1_positives']}/"
-                    f"{split_counts['npm1_profiled_samples']} profiled, "
-                    f"DNMT3A+={split_counts['dnmt3a_positives']}/"
-                    f"{split_counts['dnmt3a_profiled_samples']} profiled"
-                )
+                for split in ("train", "validation", "test"):
+                    samples = {
+                        sample
+                        for sample, assigned_split in label_splits.items()
+                        if assigned_split == split
+                    }
+                    split_labels = labels.loc[sorted(samples), gene]
+                    split_counts = {
+                        "analysis": label_name,
+                        "label": gene,
+                        "split": split,
+                        "n_samples": str(len(samples)),
+                        "profiled_samples": str(int(split_labels.notna().sum())),
+                        "positives": str(
+                            int(split_labels.eq(1).fillna(False).sum())
+                        ),
+                    }
+                    beat_aml_split_counts.append(split_counts)
+                    print(
+                        f"SPLIT beat_aml {label_name} {gene} {split}: "
+                        f"N={split_counts['n_samples']}, "
+                        f"positives={split_counts['positives']}/"
+                        f"{split_counts['profiled_samples']} profiled"
+                    )
         row = {
             "cohort": cohort,
             "rna_matrix_samples": str(values["rna_matrix_samples"]),
@@ -325,6 +385,16 @@ def main(analysis_set: str = "main") -> int:
             )
             writer.writeheader()
             writer.writerows(rows)
+    with (
+        SPLITS_DIR / f"beat_aml_splits_dnmt3a_e7{artifact_suffix}.tsv"
+    ).open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(
+            handle,
+            fieldnames=("cohort", "sample_id", "patient_id", "split"),
+            delimiter="\t",
+        )
+        writer.writeheader()
+        writer.writerows(dnmt3a_split_rows)
     with (SPLITS_DIR / f"seeds{artifact_suffix}.json").open(
         "w", encoding="utf-8"
     ) as handle:
@@ -335,12 +405,12 @@ def main(analysis_set: str = "main") -> int:
         "w", newline="", encoding="utf-8"
     ) as handle:
         fields = (
+            "analysis",
+            "label",
             "split",
             "n_samples",
-            "npm1_profiled_samples",
-            "npm1_positives",
-            "dnmt3a_profiled_samples",
-            "dnmt3a_positives",
+            "profiled_samples",
+            "positives",
         )
         writer = csv.DictWriter(handle, fieldnames=fields, delimiter="\t")
         writer.writeheader()
@@ -371,6 +441,14 @@ def main(analysis_set: str = "main") -> int:
         [sample for sample, split in source_splits.items() if split == "train"]
     ]
     selected_genes = select_top_variance_genes(source_train, n_genes=2000)
+    if len(selected_genes) != 2000:
+        raise ValueError(
+            f"Expected 2,000 jointly complete genes, found {len(selected_genes)}"
+        )
+    assert not source["expression"].loc[:, selected_genes].isna().any().any()
+    assert not cohort_data["tcga_laml"]["expression"].loc[
+        :, selected_genes
+    ].isna().any().any()
     with (PROCESSED_DIR / f"source_train_top2000_genes{artifact_suffix}.txt").open(
         "w", encoding="utf-8"
     ) as handle:

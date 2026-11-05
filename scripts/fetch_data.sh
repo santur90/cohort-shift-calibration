@@ -29,11 +29,30 @@ fetch_study() {
   mkdir -p "$dest"
   for file in "$@"; do
     local source="$TMP_DIR/datahub/$study_path/$file"
-    if [[ ! -s "$source" ]] || head -n 1 "$source" | grep -q '^version https://git-lfs.github.com/spec/v1$'; then
-      echo "Expected downloaded data file is unavailable: $source" >&2
+    local destination="$dest/$file"
+    if [[ ! -s "$source" ]]; then
+      echo "Expected fetched data file is unavailable: $source" >&2
       exit 1
     fi
-    cp "$source" "$dest/$file"
+    if head -n 1 "$source" | grep -q '^version https://git-lfs.github.com/spec/v1$'; then
+      if [[ "$file" != "data_sv.txt" ]]; then
+        echo "Git LFS pointer remains instead of downloaded data: $source" >&2
+        exit 1
+      fi
+      echo "Git LFS pointer remains for $study_id/data_sv.txt; fetching media object." >&2
+      if ! curl -fsSL \
+        "https://media.githubusercontent.com/media/cBioPortal/datahub/master/$study_path/$file" \
+        -o "$destination"; then
+        echo "Could not fetch $study_id/data_sv.txt from Git LFS media storage." >&2
+        exit 1
+      fi
+    else
+      cp "$source" "$destination"
+    fi
+    if [[ ! -s "$destination" ]] || head -n 1 "$destination" | grep -q '^version https://git-lfs.github.com/spec/v1$'; then
+      echo "Fetched $study_id/$file is empty or remains a Git LFS pointer." >&2
+      exit 1
+    fi
   done
 }
 
