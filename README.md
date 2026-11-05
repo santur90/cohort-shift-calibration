@@ -163,6 +163,15 @@ revision are disclosed below.
   synthetic convergence test, and conformal prediction sets were extended to
   accept one-dimensional positive-class probabilities as well as two-column
   class probabilities. These fixes preserve the registered methods.
+- **Additional pre-result implementation corrections:** before any E3/E4
+  real-data run, code inspection found that the runner omitted raw A3, reused
+  registered-main-split shift diagnostics for repeated splits, and did not
+  report the registered paired A0+A1-minus-A0 target Brier bootstrap or the
+  bootstrap fraction with failed/slope-above-5 calibration fits. The
+  implementation will include raw A3, calculate shift diagnostics using each
+  split's own selected genes, reuse the source E1/E2 training helper, and
+  report those registered bootstrap quantities. These are implementation
+  corrections; no target results were consulted.
 - **Split conformal:** use `alpha=0.1` and nonconformity
   `1 - p(true class)`. Compute the finite-sample corrected quantile from
   source CALIBRATION scores as rank
