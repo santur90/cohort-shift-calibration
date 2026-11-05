@@ -43,11 +43,13 @@ revision are disclosed below.
   `Tumor_Split_Read_Count`, `Tumor_Paired_End_Read_Count`, `NCBI_Build`,
   `Event_Info`, and `Center`. Public-file inspection found 23 Beat AML and 16
   TCGA-LAML PML-RARA SV records by both partner-gene and event-info evidence.
-- **Missing expression values:** impute with SOURCE-TRAIN gene medians for
-  domain-classifier and PCA diagnostics. Per-gene KS statistics use observed
-  measurements. For A3, report effective sample size (ESS), maximum weight,
-  and a degenerate-weight flag; the flag is true when ESS is below 10% of the
-  source sample count.
+- **Expression gene availability:** Genes not measured (non-missing) in every
+  sample of both cohorts are excluded before feature selection. This decision
+  uses gene availability only, no labels or model results.
+- **A3 diagnostics:** report effective sample size (ESS), maximum weight, and
+  clip bound. The degenerate-weight flag is true when ESS is below 10% of N or
+  the maximum weight equals a clip bound. Report weighted domain AUROC, or
+  state that the unweighted AUROC is unchanged by construction.
 - **E6a (sensitivity analysis):** restrict to `ONCOTREE_CODE == "AML"` and
   exclude APL samples in both cohorts; rerun E3/E4.
 - **E6b (exploratory):** add back the fallback samples selected by the
@@ -128,7 +130,9 @@ directory, `results/splits/` patient assignments and fixed seeds, and the final
 `analysis_set.tsv`. Patient splits are deterministic 60/20/20 train,
 validation, and test partitions (without label stratification); cohorts with
 fewer than three patients use only as many partitions as possible. The top
-2,000 genes are ranked by variance on Beat AML's training split only.
+2,000 genes are ranked by variance on Beat AML's training split only, after
+excluding genes with any missing values in either cohort. Main patient splits
+are stratified by NPM1; a separate DNMT3A-stratified split is written for E7.
 Split and E0 random seeds are recorded in `results/splits/seeds.json`.
 Beat AML NPM1/DNMT3A positive counts by split are saved in
 `results/splits/beat_aml_split_counts.tsv`; no target-label split counts are
@@ -137,10 +141,10 @@ written.
 per-gene statistics to `results/tables/e0_gene_ks.tsv`, and one PCA overlap
 figure per method. Beat AML uses log2 RPKM while TCGA-LAML uses batch-corrected
 RSEM; this expression-unit difference is part of the shift and is reported as
-such. The domain classifier and PCA use source-training gene medians for
-missing-value imputation; per-gene KS tests use available measurements for
-each gene. E0's A3 summary also reports the effective sample size, maximum
-weight, and whether ESS is below 10% of the Beat AML source sample count.
+such. Genes with any missing value in either cohort are excluded before
+feature selection, so E0 domain-classifier and PCA diagnostics do not impute
+expression values. E0's A3 summary reports the effective sample size, maximum
+weight, clip bound, and degenerate-weight status.
 `make run` fails clearly if the expected input files have not been fetched and
 writes the inventory and analysis-set counts.
 The inventory reports each file's parsed header and inferred identifier
