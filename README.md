@@ -99,6 +99,15 @@ revision are disclosed below.
   non-convergence. Report paired per-repeat calibrator-minus-none differences
   for Brier and ECE, plus their mean and SD. Save five-bin reliability data and
   a source-only reliability plot.
+  `make e3` runs the preregistered cross-cohort evaluation once. It uses the
+  saved top-2,000 source-train gene list, source-only training/calibration, and
+  target features for unsupervised adaptations; target labels are read only in
+  the final evaluation path. Outputs are
+  `results/tables/e3_e4_cross_cohort.tsv`,
+  `results/tables/e3_e4_repeats.tsv`,
+  `results/tables/conformal_coverage.tsv`,
+  `results/figures/reliability_target.png`, and
+  `results/figures/coverage.png`.
 - **E2 reporting decisions:** based on source-only results and before any
   target model result, the source reference for E3 is the median and IQR over
   the 20 repeats, with the registered main split shown separately. The main
@@ -113,6 +122,40 @@ revision are disclosed below.
   use Platt's smoothed targets,
   `t+ = (N+ + 1)/(N+ + 2)` and `t- = 1/(N- + 2)`, because the prior
   unpenalized fit produced hard 0/1 outputs on near-separable calibration sets.
+- **E3/E4 model selection:** the primary model is L2 logistic regression and
+  the primary calibrator is none. HGB, Platt, and isotonic are secondary
+  exploratory analyses. This choice is based on source-only E1/E2 results:
+  logistic had higher AUROC and lower Brier/ECE, and calibrators did not
+  improve source calibration. The choice was made after viewing source results
+  and before any target model results.
+- **E3/E4 expression scale and adaptations:** A0
+  (`target log2(max(x, 0) + 1)`) is the primary no-adaptation setting; raw
+  units are secondary. Compare A0, A0+A1, A2, and A0+A3. A2 is applied to raw
+  target values and both cohorts because A0's `max(x, 0)` operation creates
+  ties and is not strictly monotone. A3 uses the registered domain-classifier
+  and clipping unchanged, normalizes weights to mean 1 for model training,
+  and reports ESS, maximum weight, clip fractions, and degeneracy. A3 was
+  degenerate in E0 (all weights at the 0.1 lower clip); report it as failed
+  and do not tune it.
+- **E3/E4 comparisons and uncertainty:** run E3/E4 once. Compare target
+  results with the source-only 20-repeat median/IQR and the registered main
+  split as separate references, never with a single source result alone.
+  Summarize source variability as mean/SD and median/IQR over the 20 repeats;
+  do not combine source and target uncertainty. For the primary logistic/no-
+  calibration model trained on the registered 256/85/85 main split, estimate
+  target uncertainty with 2,000 patient-level bootstrap resamples and 95%
+  percentile confidence intervals.
+- **E3/E4 decision lock:** no method changes after viewing target results.
+  Bug fixes are permitted only when disclosed in this README before changing
+  the analysis.
+- **Split conformal:** use `alpha=0.1` and nonconformity
+  `1 - p(true class)`. Compute the finite-sample corrected quantile from
+  source CALIBRATION scores as rank
+  `ceil((n + 1) * (1 - alpha))`, capped at `n`. Report coverage overall and
+  by class, mean prediction-set size, and empty-set fraction on source TEST
+  and target samples under every registered setting. Bootstrap target
+  coverage with the same 2,000 patient-level resamples and 95% percentile
+  intervals.
 - **E6a (sensitivity analysis):** restrict to `ONCOTREE_CODE == "AML"` and
   exclude APL samples in both cohorts; rerun E3/E4.
 - **E6b (exploratory):** add back the fallback samples selected by the
@@ -158,6 +201,8 @@ revision are disclosed below.
   per-gene KS diagnostics for the requested methods.
 - `scripts/03_source_experiments.py`: runs source-only E1/E2 with repeated
   patient splits and writes baseline, calibration, and reliability outputs.
+- `scripts/04_cross_cohort.py`: runs the locked E3/E4 and split-conformal
+  cross-cohort analyses once.
 - `config.tsv`: cohort IDs and RNA expression filenames.
 - `results/tables/` and `results/figures/`: generated outputs.
 
