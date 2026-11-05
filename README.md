@@ -93,21 +93,14 @@ revision are disclosed below.
   calibration slope from a logistic regression with free intercept and slope;
   estimate calibration intercept from a logistic model with slope fixed at 1
   using the logit as an offset. Platt takes `logit(p)` as its one-dimensional
-  input, uses an unpenalized logistic fit (`C=np.inf`) with
-  `solver="lbfgs"` and `max_iter=2000`. In addition to mean and SD, report median, Q1, and Q3
-  for slope and intercept; count repeats with slope above 5 and slope-fit
-  non-convergence. Report paired per-repeat calibrator-minus-none differences
-  for Brier and ECE, plus their mean and SD. Save five-bin reliability data and
-  a source-only reliability plot.
-  `make e3` runs the preregistered cross-cohort evaluation once. It uses the
-  saved top-2,000 source-train gene list, source-only training/calibration, and
-  target features for unsupervised adaptations; target labels are read only in
-  the final evaluation path. Outputs are
-  `results/tables/e3_e4_cross_cohort.tsv`,
-  `results/tables/e3_e4_repeats.tsv`,
-  `results/tables/conformal_coverage.tsv`,
-  `results/figures/reliability_target.png`, and
-  `results/figures/coverage.png`.
+  input and fits an unpenalized logistic model with Platt-smoothed targets
+  (`t+ = (N+ + 1)/(N+ + 2)`, `t- = 1/(N- + 2)`) using SciPy `minimize` with
+  `method="L-BFGS-B"` and `maxiter=2000`. Summarize calibration slope and
+  intercept by median, Q1, and Q3 rather than mean; summarize other metrics by
+  mean and SD. Count repeats with slope above 5 and slope-fit non-convergence.
+  Report paired per-repeat calibrator-minus-none differences for Brier and ECE,
+  plus their mean and SD. Save five-bin reliability data and a source-only
+  reliability plot.
 - **E2 reporting decisions:** based on source-only results and before any
   target model result, the source reference for E3 is the median and IQR over
   the 20 repeats, with the registered main split shown separately. The main
@@ -148,6 +141,11 @@ revision are disclosed below.
 - **E3/E4 decision lock:** no method changes after viewing target results.
   Bug fixes are permitted only when disclosed in this README before changing
   the analysis.
+- **Implementation bug-fix disclosure (before any E3/E4 real-data run):** the
+  smoothed-target Platt optimizer's objective sign was corrected after a
+  synthetic convergence test, and conformal prediction sets were extended to
+  accept one-dimensional positive-class probabilities as well as two-column
+  class probabilities. These fixes preserve the registered methods.
 - **Split conformal:** use `alpha=0.1` and nonconformity
   `1 - p(true class)`. Compute the finite-sample corrected quantile from
   source CALIBRATION scores as rank
@@ -285,6 +283,15 @@ The E2 table keeps all repeat-level rows, including selected hyperparameters,
 and separate registered-main-split rows marked as not part of the 20 repeats.
 The runner prints the selected logistic C and HGB parameter distributions and
 flags when logistic C is at a grid edge in more than half of the 20 repeats.
+`make e3` runs the preregistered cross-cohort evaluation once. It uses saved
+source-train gene lists, source-only training/calibration, and target features
+for unsupervised adaptations; target labels are read only inside the final
+evaluation function. Outputs are
+`results/tables/e3_e4_cross_cohort.tsv`,
+`results/tables/e3_e4_repeats.tsv`,
+`results/tables/conformal_coverage.tsv`,
+`results/figures/reliability_target.png`, and
+`results/figures/coverage.png`.
 `make run` fails clearly if the expected input files have not been fetched and
 writes the inventory and analysis-set counts.
 The inventory reports each file's parsed header and inferred identifier

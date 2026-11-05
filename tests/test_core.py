@@ -5,9 +5,15 @@ import numpy as np
 import pandas as pd
 import pytest
 from scipy.special import expit
+from sklearn.linear_model import LogisticRegression
+from sklearn.metrics import roc_auc_score
 
 from cohortshift.adapt import adapt_features, adaptation_weights
-from cohortshift.conformal import conformal_quantile, prediction_sets
+from cohortshift.conformal import (
+    conformal_coverage_metrics,
+    conformal_quantile,
+    prediction_sets,
+)
 from cohortshift.data import (
     apl_evidence_samples,
     detect_apl_samples,
@@ -44,10 +50,15 @@ from cohortshift.shift import (
     target_expression_a0,
 )
 from cohortshift.source_experiments import (
+    _apply_calibrator,
     _fit_calibrator,
     expected_calibration_error,
     run_source_experiments,
     select_repeat_genes,
+)
+from cohortshift.experiments import (
+    _bootstrap_metric_intervals,
+    predict_adapted_probabilities,
 )
 
 
@@ -634,8 +645,38 @@ def test_e0_includes_a0_and_composite_rows_and_keeps_raw_rows(tmp_path):
 def test_conformal_quantile_and_prediction_sets():
     assert conformal_quantile(np.array([0.1, 0.2, 0.3]), alpha=0.25) == 0.3
     assert prediction_sets(np.array([[0.9, 0.1]]), 0.2) == [(0,)]
+    metrics = conformal_coverage_metrics(
+        np.array([0, 1]),
+        np.array([[0.9, 0.1], [0.2, 0.8]]),
+        0.25,
+    )
+    assert metrics["coverage"] == pytest.approx(1.0)
+    assert metrics["positive_class_coverage"] == pytest.approx(1.0)
+    assert metrics["negative_class_coverage"] == pytest.approx(1.0)
+    assert metrics["mean_prediction_set_size"] == pytest.approx(1.0)
+    assert metrics["empty_set_fraction"] == pytest.approx(0.0)
     with pytest.raises(ValueError):
         conformal_quantile(np.array([]))
+
+
+def test_split_conformal_has_exchangeable_synthetic_coverage():
+    rng = np.random.default_rng(591)
+    all_probabilities = rng.uniform(0.02, 0.98, 4000)
+    all_labels = rng.binomial(1, all_probabilities)
+    calibration_probabilities = all_probabilities[:2000]
+    calibration_labels = all_labels[:2000]
+    target_probabilities = all_probabilities[2000:]
+    target_labels = all_labels[2000:]
+    calibration_scores = 1 - np.where(
+        calibration_labels == 1,
+        calibration_probabilities,
+        1 - calibration_probabilities,
+    )
+    threshold = conformal_quantile(calibration_scores, alpha=0.1)
+    metrics = conformal_coverage_metrics(
+        target_labels, target_probabilities, threshold
+    )
+    assert metrics["coverage"] >= 0.9 - 0.04
 
 
 def test_equal_count_ece_separates_calibrated_and_overconfident_predictions():
@@ -767,6 +808,7 @@ def test_source_experiment_tables_are_bit_identical_for_same_seed():
         "slope_gt_5_repeats",
         "slope_fit_not_converged_repeats",
         "slope_gt_5_or_fit_not_converged_repeats",
+        "frac_pred_at_clip_bounds",
     }.issubset(first["e2"].columns)
     paired = first["e2"].loc[
         first["e2"]["row_type"].str.startswith("paired_difference")
@@ -783,7 +825,99 @@ def test_platt_calibrator_recovers_known_logit_slope():
     calibrator = _fit_calibrator("Platt", base_probabilities, labels)
 
     assert calibrator is not None
-    assert calibrator.C == np.inf
-    assert calibrator.solver == "lbfgs"
+    assert calibrator.penalty is None
+    assert calibrator.solver == "L-BFGS-B"
     assert calibrator.max_iter == 2000
     assert calibrator.coef_[0, 0] == pytest.approx(1.65, abs=0.06)
+
+
+def test_platt_smoothed_targets_avoid_extremes_and_preserve_rank():
+    probabilities = np.r_[np.linspace(0.001, 0.05, 80), np.linspace(0.95, 0.999, 80)]
+    labels = np.r_[np.zeros(80, dtype=int), np.ones(80, dtype=int)]
+    calibrator = _fit_calibrator("Platt", probabilities, labels)
+    assert calibrator is not None
+    calibrated = _apply_calibrator("Platt", calibrator, probabilities)
+    assert np.all((calibrated > 0) & (calibrated < 1))
+    assert np.all(np.diff(calibrated) > 0)
+    assert roc_auc_score(labels, probabilities) == roc_auc_score(
+        labels, calibrated
+    )
+
+
+def test_e4_a1_uses_source_train_statistics_and_avoids_second_scaler():
+    source_train = pd.DataFrame(
+        {"a": [0.0, 2.0, 4.0, 6.0], "b": [10.0, 12.0, 14.0, 16.0]}
+    )
+    source_test = pd.DataFrame({"a": [100.0], "b": [110.0]})
+    target = pd.DataFrame({"a": [20.0, 24.0], "b": [-5.0, 5.0]})
+    train_z, target_z = adapt_features(
+        "A1", source_train, target, source_train_features=source_train
+    )
+    test_z, _ = adapt_features(
+        "A1", source_test, target, source_train_features=source_train
+    )
+    assert train_z.mean().to_numpy() == pytest.approx([0.0, 0.0])
+    assert target_z.mean().to_numpy() == pytest.approx([0.0, 0.0])
+    expected_test_a = (100.0 - source_train["a"].mean()) / source_train["a"].std(ddof=0)
+    assert test_z.iloc[0, 0] == pytest.approx(expected_test_a)
+
+
+def test_e3_predictions_are_label_free_for_target_and_seed_stable():
+    rng = np.random.default_rng(871)
+    source_train = pd.DataFrame(rng.normal(size=(60, 6)), columns=list("abcdef"))
+    train_labels = np.tile([0, 1], 30)
+    source_calibration = pd.DataFrame(rng.normal(size=(20, 6)), columns=list("abcdef"))
+    calibration_labels = np.tile([0, 1], 10)
+    source_test = pd.DataFrame(rng.normal(size=(20, 6)), columns=list("abcdef"))
+    target = pd.DataFrame(rng.normal(loc=0.5, size=(18, 6)), columns=list("abcdef"))
+    result = predict_adapted_probabilities(
+        source_train,
+        train_labels,
+        source_calibration,
+        calibration_labels,
+        source_test,
+        target,
+        method="A0+A1",
+        seed=229,
+    )
+    result_again = predict_adapted_probabilities(
+        source_train,
+        train_labels,
+        source_calibration,
+        calibration_labels,
+        source_test,
+        target,
+        method="A0+A1",
+        seed=229,
+    )
+    shuffled_target_labels = rng.permutation(np.tile([0, 1], 9))
+    assert shuffled_target_labels.size == len(target)
+    assert "target_labels" not in inspect.signature(
+        predict_adapted_probabilities
+    ).parameters
+    pd.testing.assert_frame_equal(
+        result["adapted_target_features"], result_again["adapted_target_features"]
+    )
+    for model_name in ("logistic", "hist_gradient_boosting"):
+        original_model = result["predictions"][model_name]
+        repeat_model = result_again["predictions"][model_name]
+        np.testing.assert_array_equal(
+            original_model["target_probabilities"],
+            repeat_model["target_probabilities"],
+        )
+    assert isinstance(
+        result["predictions"]["logistic"]["estimator"], LogisticRegression
+    )
+
+
+def test_target_bootstrap_metrics_are_bit_identical_for_same_seed():
+    labels = np.tile([0, 1], 30)
+    probabilities = np.where(labels == 1, 0.75, 0.25)
+    patients = [f"patient-{index}" for index in range(len(labels))]
+    first = _bootstrap_metric_intervals(
+        labels, probabilities, patients, seed=190, n_resamples=25
+    )
+    second = _bootstrap_metric_intervals(
+        labels, probabilities, patients, seed=190, n_resamples=25
+    )
+    assert first == second

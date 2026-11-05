@@ -21,6 +21,7 @@ from sklearn.metrics import (
     roc_auc_score,
 )
 
+from .calibration import PlattScaler, fit_platt_scaler
 from .features import select_top_variance_genes
 from .models import (
     SOURCE_HIST_GRADIENT_BOOSTING_GRID,
@@ -123,6 +124,9 @@ def _metric_values(
         "ece": ece,
         "ece_bins": len(bins),
         "ece_bin_counts": "|".join(str(row["bin_count"]) for row in bins),
+        "frac_pred_at_clip_bounds": float(
+            ((p <= 1e-6) | (p >= 1 - 1e-6)).mean()
+        ),
     }
     if include_calibration:
         calibration_model = LogisticRegression(
@@ -144,16 +148,11 @@ def _metric_values(
 
 def _fit_calibrator(
     kind: str, calibration_probabilities: np.ndarray, calibration_labels: np.ndarray
-) -> LogisticRegression | IsotonicRegression | None:
+) -> PlattScaler | IsotonicRegression | None:
     if kind == "none":
         return None
     if kind == "Platt":
-        return LogisticRegression(
-            C=np.inf, solver="lbfgs", max_iter=2000
-        ).fit(
-            _clipped_logit(calibration_probabilities).reshape(-1, 1),
-            np.asarray(calibration_labels, dtype=int),
-        )
+        return fit_platt_scaler(calibration_probabilities, calibration_labels)
     if kind == "isotonic":
         return IsotonicRegression(out_of_bounds="clip").fit(
             np.asarray(calibration_probabilities, dtype=float),
@@ -164,15 +163,15 @@ def _fit_calibrator(
 
 def _apply_calibrator(
     kind: str,
-    calibrator: LogisticRegression | IsotonicRegression | None,
+    calibrator: PlattScaler | IsotonicRegression | None,
     probabilities: np.ndarray,
 ) -> np.ndarray:
     p = np.asarray(probabilities, dtype=float)
     if kind == "none":
         return np.clip(p, 1e-6, 1 - 1e-6)
-    if isinstance(calibrator, LogisticRegression):
+    if isinstance(calibrator, PlattScaler):
         return np.clip(
-            calibrator.predict_proba(_clipped_logit(p).reshape(-1, 1))[:, 1],
+            calibrator.predict_proba(_clipped_logit(p))[:, 1],
             1e-6,
             1 - 1e-6,
         )
@@ -261,7 +260,16 @@ def _summary_rows(
             }
             for metric in metric_names:
                 values = group[metric].astype(float)
-                if summary_stat == "mean":
+                values = values.loc[np.isfinite(values)]
+                if values.empty:
+                    row[metric] = np.nan
+                    continue
+                if metric in {"calibration_slope", "calibration_intercept"} and summary_stat in {
+                    "mean",
+                    "sd",
+                }:
+                    row[metric] = np.nan
+                elif summary_stat == "mean":
                     row[metric] = float(values.mean())
                 elif summary_stat == "sd":
                     row[metric] = float(values.std(ddof=1))
@@ -507,6 +515,12 @@ def run_source_experiments(
                 metrics, bins = _metric_values(
                     test_y, calibrated_test, include_calibration=True
                 )
+                if (
+                    calibrator_name in {"Platt", "isotonic"}
+                    and metrics["frac_pred_at_clip_bounds"] > 0.05
+                ):
+                    metrics["calibration_slope"] = np.nan
+                    metrics["calibration_intercept"] = np.nan
                 e2_rows.append(
                     {
                         "row_type": (
@@ -551,6 +565,7 @@ def run_source_experiments(
         "ece",
         "calibration_intercept",
         "calibration_slope",
+        "frac_pred_at_clip_bounds",
     )
     e2_summary = _summary_rows(
         [row for row in e2_rows if row["split_set"] == "20_repeats"],
