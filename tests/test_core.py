@@ -1,4 +1,5 @@
 import inspect
+from io import StringIO
 
 import numpy as np
 import pandas as pd
@@ -40,6 +41,11 @@ from cohortshift.shift import (
     per_gene_ks,
     run_e0_shift,
     target_expression_a0,
+)
+from cohortshift.source_experiments import (
+    expected_calibration_error,
+    run_source_experiments,
+    select_repeat_genes,
 )
 
 
@@ -628,3 +634,83 @@ def test_conformal_quantile_and_prediction_sets():
     assert prediction_sets(np.array([[0.9, 0.1]]), 0.2) == [(0,)]
     with pytest.raises(ValueError):
         conformal_quantile(np.array([]))
+
+
+def test_equal_count_ece_separates_calibrated_and_overconfident_predictions():
+    group_probabilities = np.repeat([0.1, 0.3, 0.5, 0.7, 0.9], 20)
+    labels = np.concatenate(
+        [
+            np.r_[np.ones(int(probability * 20)), np.zeros(20 - int(probability * 20))]
+            for probability in (0.1, 0.3, 0.5, 0.7, 0.9)
+        ]
+    ).astype(int)
+    calibrated_ece, calibrated_bins = expected_calibration_error(
+        labels, group_probabilities
+    )
+    overconfident_probabilities = np.repeat([0.01, 0.05, 0.95, 0.99, 0.999], 20)
+    overconfident_ece, overconfident_bins = expected_calibration_error(
+        labels, overconfident_probabilities
+    )
+    assert calibrated_ece == pytest.approx(0.0)
+    assert overconfident_ece > calibrated_ece + 0.2
+    assert [row["bin_count"] for row in calibrated_bins] == [20] * 5
+    assert [row["bin_count"] for row in overconfident_bins] == [20] * 5
+
+
+def test_train_only_gene_selection_ignores_test_expression_and_labels():
+    rng = np.random.default_rng(99)
+    sample_ids = [f"sample-{index}" for index in range(40)]
+    expression = pd.DataFrame(
+        rng.normal(size=(40, 8)), index=sample_ids, columns=[f"g{i}" for i in range(8)]
+    )
+    training_ids = sample_ids[:24]
+    original_genes = select_repeat_genes(expression, training_ids, n_genes=5)
+
+    changed_expression = expression.copy()
+    changed_expression.loc[sample_ids[24:]] = 1e9
+    changed_test_labels = pd.Series(
+        np.tile([0, 1], 8), index=sample_ids[24:]
+    )
+    assert changed_test_labels.eq(1).any()
+    assert (
+        select_repeat_genes(changed_expression, training_ids, n_genes=5)
+        == original_genes
+    )
+    assert "labels" not in inspect.signature(select_repeat_genes).parameters
+
+
+def test_source_experiment_functions_accept_no_target_data():
+    for function in (run_source_experiments, select_repeat_genes):
+        assert all(
+            "target" not in parameter.casefold()
+            for parameter in inspect.signature(function).parameters
+        )
+
+
+def test_source_experiment_tables_are_bit_identical_for_same_seed():
+    rng = np.random.default_rng(7123)
+    sample_ids = [f"source-{index:03d}" for index in range(70)]
+    labels = pd.Series(np.tile([0, 1], 35), index=sample_ids, name="NPM1")
+    values = rng.normal(size=(70, 10))
+    values[:, 0] += labels.to_numpy() * 1.5
+    expression = pd.DataFrame(
+        values, index=sample_ids, columns=[f"gene-{index}" for index in range(10)]
+    )
+    patient_by_sample = {sample: f"patient-{index:03d}" for index, sample in enumerate(sample_ids)}
+
+    first = run_source_experiments(
+        expression, labels, patient_by_sample, seeds=(7201,), n_genes=6
+    )
+    second = run_source_experiments(
+        expression, labels, patient_by_sample, seeds=(7201,), n_genes=6
+    )
+    for name in ("e1", "e2", "reliability", "splits", "selected_genes"):
+        pd.testing.assert_frame_equal(first[name], second[name], check_exact=True)
+        first_buffer = StringIO()
+        second_buffer = StringIO()
+        first[name].to_csv(first_buffer, sep="\t", index=False)
+        second[name].to_csv(second_buffer, sep="\t", index=False)
+        assert first_buffer.getvalue() == second_buffer.getvalue()
+    split_counts = first["splits"].groupby("split")["patient_id"].nunique()
+    assert split_counts.to_dict() == {"calibration": 14, "test": 14, "train": 42}
+    assert len(first["reliability"]) == 2 * 3 * 5

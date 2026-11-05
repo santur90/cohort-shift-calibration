@@ -165,6 +165,8 @@ make check-data
 make check-apl
 make prepare
 make e0
+make e1
+make e2
 make run
 make test
 ```

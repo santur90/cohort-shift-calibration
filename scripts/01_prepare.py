@@ -240,6 +240,11 @@ def main(analysis_set: str = "main") -> int:
     cohort_data["beat_aml"]["expression"] = source_expression
     cohort_data["tcga_laml"]["expression"] = target_expression
     shared_genes = source_expression.columns.tolist()
+    if analysis_set == "main":
+        with (
+            PROCESSED_DIR / "jointly_complete_gene_names.txt"
+        ).open("w", encoding="utf-8") as handle:
+            handle.write("\n".join(shared_genes) + "\n")
     print(
         "GENE AVAILABILITY dropped genes: "
         f"Beat AML={dropped_genes['source']}, "
