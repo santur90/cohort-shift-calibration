@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import csv
 import re
+from collections.abc import Iterable, Iterator
 from pathlib import Path
-from typing import Iterable, Iterator, Literal
+from typing import Literal
 
 import numpy as np
 import pandas as pd

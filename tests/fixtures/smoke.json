@@ -1,0 +1,8 @@
+{
+  "seed": 2026,
+  "source_samples": 100,
+  "target_samples": 60,
+  "genes": 2000,
+  "selected_genes": 16,
+  "target_shift": 0.75
+}

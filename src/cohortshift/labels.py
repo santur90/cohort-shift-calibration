@@ -8,10 +8,10 @@ from collections.abc import Iterable, Mapping
 import pandas as pd
 
 _DIAGNOSIS_TERMS = re.compile(
-    r"\b(diagnos\w*|initial|baseline|presentation|de novo|primary)\b", re.I
+    r"\b(diagnos\w*|initial|baseline|presentation|de novo|primary)\b", re.IGNORECASE
 )
 _RELAPSE_TERMS = re.compile(
-    r"\b(relaps\w*|recur\w*|progress\w*|refractory)\b", re.I
+    r"\b(relaps\w*|recur\w*|progress\w*|refractory)\b", re.IGNORECASE
 )
 NON_SILENT_VARIANT_CLASSIFICATIONS = frozenset(
     {

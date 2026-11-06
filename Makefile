@@ -1,6 +1,6 @@
 PYTHON ?= python3
 
-.PHONY: data run check-data check-selection check-apl prepare e0 e1 e2 e3 e5 e6 smoke test
+.PHONY: data run check-data check-selection check-apl prepare e0 e1 e2 e3 e5 e6 smoke reproduce-check test
 
 data:
 	bash scripts/fetch_data.sh
@@ -42,7 +42,10 @@ e6:
 	$(PYTHON) scripts/04_cross_cohort.py --analysis-set e6b
 
 smoke:
-	$(PYTHON) -c "import cohortshift; from cohortshift import data, labels, features, models, calibration, conformal, shift, adapt, experiments, plots, source_experiments, recalibration; print('cohortshift imports OK')"
+	OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1 $(PYTHON) scripts/smoke_pipeline.py
+
+reproduce-check:
+	OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1 $(PYTHON) scripts/smoke_pipeline.py --reproduce
 
 test:
 	$(PYTHON) -m pytest

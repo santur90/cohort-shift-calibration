@@ -287,7 +287,7 @@ def main(analysis_set: str = "main") -> int:
             _output_path(PROCESSED_DIR, f"aligned_{cohort}.tsv.gz", analysis_set),
             sep="\t",
             index_label="SAMPLE_ID",
-            compression="gzip",
+            compression={"method": "gzip", "mtime": 0},
         )
         values["labels"].to_csv(
             _output_path(PROCESSED_DIR, f"labels_{cohort}.tsv", analysis_set),

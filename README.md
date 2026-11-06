@@ -262,6 +262,232 @@ revision are disclosed below.
 - **Adaptation functions never receive target labels.** Adaptation interfaces
   take source features and labels plus target features only where needed.
 
+<!-- BEGIN GENERATED RESULTS -->
+## Results
+
+Generated from existing `results/tables` by `scripts/update_results.py`; NA means unavailable or suppressed by the registered clip rule. Only the two comparisons marked confirmatory are confirmatory; all other results below are exploratory.
+
+### Main (exploratory)
+
+- beat_aml: 426 samples, 121 NPM1 positives.
+- tcga_laml: 173 samples, 48 NPM1 positives.
+
+| Setting | Chosen hyperparameters / status | AUROC (95% CI) | AUPRC (95% CI) | Brier (95% CI) | ECE (95% CI) | Intercept (95% CI) | Slope (95% CI) |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| A0 | {"classifier__C": 1.0} | 0.977 [0.943, 1.000] | 0.966 [0.917, 0.999] | 0.275 [0.211, 0.343] | 0.276 [0.212, 0.345] | NA [NA, NA] | NA [NA, NA] |
+| A0+A1 | {"C": 0.01} | 0.972 [0.926, 0.999] | 0.968 [0.924, 0.998] | 0.034 [0.014, 0.056] | 0.040 [0.020, 0.067] | -0.398 [-0.978, 0.254] | 1.066 [0.782, 2.865] |
+| A2 | {"classifier__C": 0.1} | 0.976 [0.931, 0.999] | 0.972 [0.934, 0.998] | 0.034 [0.014, 0.057] | 0.036 [0.013, 0.065] | 1.735 [0.493, 3.187] | 0.703 [0.531, 1.666] |
+| A0+A3 | failed | NA | NA | NA | NA | NA | NA |
+
+Chosen hyperparameters by outcome, setting and model (main split):
+
+| Outcome | Setting | Model | Status | Parameters |
+| --- | --- | --- | --- | --- |
+| NPM1 | raw | logistic | complete | {"classifier__C": 1.0} |
+| NPM1 | raw | hist_gradient_boosting | complete | {"learning_rate": 0.1, "max_depth": 3} |
+| NPM1 | A0 | logistic | complete | {"classifier__C": 1.0} |
+| NPM1 | A0 | hist_gradient_boosting | complete | {"learning_rate": 0.1, "max_depth": 3} |
+| NPM1 | A0+A1 | logistic | complete | {"C": 0.01} |
+| NPM1 | A0+A1 | hist_gradient_boosting | complete | {"learning_rate": 0.1, "max_depth": 3} |
+| NPM1 | A2 | logistic | complete | {"classifier__C": 0.1} |
+| NPM1 | A2 | hist_gradient_boosting | complete | {"learning_rate": 0.05, "max_depth": 3} |
+| NPM1 | A3 | logistic | failed | NA |
+| NPM1 | A3 | hist_gradient_boosting | failed | NA |
+| NPM1 | A0+A3 | logistic | failed | NA |
+| NPM1 | A0+A3 | hist_gradient_boosting | failed | NA |
+| DNMT3A | raw | logistic | complete | {"classifier__C": 0.1} |
+| DNMT3A | raw | hist_gradient_boosting | complete | {"learning_rate": 0.1, "max_depth": 3} |
+| DNMT3A | A0 | logistic | complete | {"classifier__C": 0.1} |
+| DNMT3A | A0 | hist_gradient_boosting | complete | {"learning_rate": 0.1, "max_depth": 3} |
+| DNMT3A | A0+A1 | logistic | complete | {"C": 1.0} |
+| DNMT3A | A0+A1 | hist_gradient_boosting | complete | {"learning_rate": 0.1, "max_depth": 3} |
+| DNMT3A | A2 | logistic | complete | {"classifier__C": 0.1} |
+| DNMT3A | A2 | hist_gradient_boosting | complete | {"learning_rate": 0.05, "max_depth": 3} |
+| DNMT3A | A3 | logistic | failed | NA |
+| DNMT3A | A3 | hist_gradient_boosting | failed | NA |
+| DNMT3A | A0+A3 | logistic | failed | NA |
+| DNMT3A | A0+A3 | hist_gradient_boosting | failed | NA |
+
+### E6a (exploratory)
+
+- beat_aml: 406 samples, 121 NPM1 positives.
+- tcga_laml: 157 samples, 48 NPM1 positives.
+
+| Setting | Chosen hyperparameters / status | AUROC (95% CI) | AUPRC (95% CI) | Brier (95% CI) | ECE (95% CI) | Intercept (95% CI) | Slope (95% CI) |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| A0 | {"classifier__C": 0.01} | 0.973 [0.929, 0.998] | 0.969 [0.930, 0.996] | 0.183 [0.138, 0.233] | 0.227 [0.173, 0.285] | 3.803 [3.258, 4.431] | 1.127 [0.810, 2.488] |
+| A0+A1 | {"C": 0.01} | 0.973 [0.930, 0.998] | 0.967 [0.926, 0.996] | 0.038 [0.018, 0.061] | 0.020 [0.012, 0.061] | -0.125 [-0.737, 0.573] | 1.036 [0.749, 2.262] |
+| A2 | {"classifier__C": 1.0} | 0.975 [0.933, 0.998] | 0.970 [0.930, 0.996] | 0.041 [0.018, 0.067] | 0.038 [0.012, 0.072] | NA [NA, NA] | NA [NA, NA] |
+| A0+A3 | failed | NA | NA | NA | NA | NA | NA |
+
+Chosen hyperparameters by outcome, setting and model (main split):
+
+| Outcome | Setting | Model | Status | Parameters |
+| --- | --- | --- | --- | --- |
+| NPM1 | raw | logistic | complete | {"classifier__C": 0.01} |
+| NPM1 | raw | hist_gradient_boosting | complete | {"learning_rate": 0.05, "max_depth": 2} |
+| NPM1 | A0 | logistic | complete | {"classifier__C": 0.01} |
+| NPM1 | A0 | hist_gradient_boosting | complete | {"learning_rate": 0.05, "max_depth": 2} |
+| NPM1 | A0+A1 | logistic | complete | {"C": 0.01} |
+| NPM1 | A0+A1 | hist_gradient_boosting | complete | {"learning_rate": 0.05, "max_depth": 2} |
+| NPM1 | A2 | logistic | complete | {"classifier__C": 1.0} |
+| NPM1 | A2 | hist_gradient_boosting | complete | {"learning_rate": 0.1, "max_depth": 2} |
+| NPM1 | A3 | logistic | failed | NA |
+| NPM1 | A3 | hist_gradient_boosting | failed | NA |
+| NPM1 | A0+A3 | logistic | failed | NA |
+| NPM1 | A0+A3 | hist_gradient_boosting | failed | NA |
+| DNMT3A | raw | logistic | complete | {"classifier__C": 0.001} |
+| DNMT3A | raw | hist_gradient_boosting | complete | {"learning_rate": 0.1, "max_depth": 2} |
+| DNMT3A | A0 | logistic | complete | {"classifier__C": 0.001} |
+| DNMT3A | A0 | hist_gradient_boosting | complete | {"learning_rate": 0.1, "max_depth": 2} |
+| DNMT3A | A0+A1 | logistic | complete | {"C": 0.001} |
+| DNMT3A | A0+A1 | hist_gradient_boosting | complete | {"learning_rate": 0.1, "max_depth": 2} |
+| DNMT3A | A2 | logistic | complete | {"classifier__C": 0.001} |
+| DNMT3A | A2 | hist_gradient_boosting | complete | {"learning_rate": 0.05, "max_depth": 2} |
+| DNMT3A | A3 | logistic | failed | NA |
+| DNMT3A | A3 | hist_gradient_boosting | failed | NA |
+| DNMT3A | A0+A3 | logistic | failed | NA |
+| DNMT3A | A0+A3 | hist_gradient_boosting | failed | NA |
+
+### E6b (exploratory)
+
+- beat_aml: 585 samples, 152 NPM1 positives.
+- tcga_laml: 173 samples, 48 NPM1 positives.
+
+| Setting | Chosen hyperparameters / status | AUROC (95% CI) | AUPRC (95% CI) | Brier (95% CI) | ECE (95% CI) | Intercept (95% CI) | Slope (95% CI) |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| A0 | {"classifier__C": 0.001} | 0.972 [0.935, 0.997] | 0.959 [0.912, 0.993] | 0.200 [0.152, 0.251] | 0.230 [0.175, 0.290] | 2.984 [2.652, 3.294] | 1.947 [1.440, 4.215] |
+| A0+A1 | {"C": 0.001} | 0.973 [0.936, 0.997] | 0.958 [0.911, 0.994] | 0.048 [0.031, 0.068] | 0.053 [0.038, 0.095] | 0.045 [-0.296, 0.374] | 1.808 [1.341, 3.926] |
+| A2 | {"classifier__C": 0.001} | 0.975 [0.946, 0.997] | 0.952 [0.900, 0.992] | 0.077 [0.054, 0.103] | 0.111 [0.077, 0.148] | 1.076 [0.718, 1.413] | 1.778 [1.345, 3.602] |
+| A0+A3 | failed | NA | NA | NA | NA | NA | NA |
+
+Chosen hyperparameters by outcome, setting and model (main split):
+
+| Outcome | Setting | Model | Status | Parameters |
+| --- | --- | --- | --- | --- |
+| NPM1 | raw | logistic | complete | {"classifier__C": 0.001} |
+| NPM1 | raw | hist_gradient_boosting | complete | {"learning_rate": 0.05, "max_depth": 2} |
+| NPM1 | A0 | logistic | complete | {"classifier__C": 0.001} |
+| NPM1 | A0 | hist_gradient_boosting | complete | {"learning_rate": 0.05, "max_depth": 2} |
+| NPM1 | A0+A1 | logistic | complete | {"C": 0.001} |
+| NPM1 | A0+A1 | hist_gradient_boosting | complete | {"learning_rate": 0.05, "max_depth": 2} |
+| NPM1 | A2 | logistic | complete | {"classifier__C": 0.001} |
+| NPM1 | A2 | hist_gradient_boosting | complete | {"learning_rate": 0.05, "max_depth": 3} |
+| NPM1 | A3 | logistic | failed | NA |
+| NPM1 | A3 | hist_gradient_boosting | failed | NA |
+| NPM1 | A0+A3 | logistic | failed | NA |
+| NPM1 | A0+A3 | hist_gradient_boosting | failed | NA |
+| DNMT3A | raw | logistic | complete | {"classifier__C": 0.001} |
+| DNMT3A | raw | hist_gradient_boosting | complete | {"learning_rate": 0.1, "max_depth": 2} |
+| DNMT3A | A0 | logistic | complete | {"classifier__C": 0.001} |
+| DNMT3A | A0 | hist_gradient_boosting | complete | {"learning_rate": 0.1, "max_depth": 2} |
+| DNMT3A | A0+A1 | logistic | complete | {"C": 0.001} |
+| DNMT3A | A0+A1 | hist_gradient_boosting | complete | {"learning_rate": 0.1, "max_depth": 2} |
+| DNMT3A | A2 | logistic | complete | {"classifier__C": 0.001} |
+| DNMT3A | A2 | hist_gradient_boosting | complete | {"learning_rate": 0.1, "max_depth": 2} |
+| DNMT3A | A3 | logistic | failed | NA |
+| DNMT3A | A3 | hist_gradient_boosting | failed | NA |
+| DNMT3A | A0+A3 | logistic | failed | NA |
+| DNMT3A | A0+A3 | hist_gradient_boosting | failed | NA |
+
+### Confirmatory comparisons
+
+1. A0 logistic/no-calibration target versus the saved E2 source reference:
+
+| Metric | Target (95% CI) | E2 source median [Q1, Q3] | E2 source main split |
+| --- | --- | --- | --- |
+| brier | 0.275 [0.211, 0.343] | 0.026 [0.014, 0.031] | 0.021 |
+| calibration_intercept | NA [NA, NA] | 0.327 [0.023, 0.901] | -0.507 |
+| calibration_slope | NA [NA, NA] | 0.771 [0.635, 1.015] | 0.915 |
+
+2. Paired target Brier difference, A0+A1 minus A0: -0.241 [-0.309, -0.176].
+
+The E2 source reference uses the saved source-only training runs; the setting-specific E3 source repeat summaries are separate. C is re-tuned for every E3 setting. E2 uses CV seeds 7101–7120; E3 uses 4201 plus repeat number, with the same patient splits and genes. Both use the >5% clip-bound NA rule; the E3 summaries and this report suppress slope/intercept when fewer than 15 repeats are valid.
+
+### E5 (exploratory)
+
+| Setting | k | Method | Brier [Q1, Q3] | Paired Δ Brier | Intercept [Q1, Q3] | Paired Δ intercept | Slope [Q1, Q3] | Paired Δ slope | Fit failure fraction |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| A0+A1 | 0 | none | 0.034 [0.034, 0.034] | NA [NA, NA] | -0.398 [-0.398, -0.398] | NA [NA, NA] | 1.066 [1.066, 1.066] | NA [NA, NA] | 0.000 |
+| A0+A1 | 10 | Platt | 0.056 [0.053, 0.060] | 0.021 [0.018, 0.027] | -0.233 [-0.443, -0.039] | 0.167 [0.015, 0.327] | 2.419 [2.232, 2.619] | 1.378 [1.191, 1.564] | 0.000 |
+| A0+A1 | 10 | intercept_only | 0.036 [0.033, 0.042] | 0.002 [-0.002, 0.008] | -0.215 [-0.915, 0.464] | 0.191 [-0.479, 0.837] | 1.044 [1.040, 1.051] | -0.000 [-0.000, 0.000] | 0.000 |
+| A0+A1 | 10 | none | 0.035 [0.034, 0.035] | 0.000 [0.000, 0.000] | -0.407 [-0.446, -0.370] | 0.000 [0.000, 0.000] | 1.045 [1.040, 1.051] | 0.000 [0.000, 0.000] | 0.000 |
+| A0+A1 | 20 | Platt | 0.045 [0.043, 0.048] | 0.009 [0.007, 0.018] | -0.181 [-0.405, 0.025] | 0.241 [0.101, 0.386] | 1.783 [1.661, 2.324] | 0.745 [0.639, 1.159] | 0.000 |
+| A0+A1 | 20 | intercept_only | 0.035 [0.034, 0.040] | 0.000 [-0.002, 0.006] | -0.246 [-0.854, 0.408] | 0.177 [-0.368, 0.744] | 1.027 [1.018, 1.169] | 0.000 [-0.000, 0.000] | 0.000 |
+| A0+A1 | 20 | none | 0.035 [0.031, 0.037] | 0.000 [0.000, 0.000] | -0.423 [-0.503, -0.354] | 0.000 [0.000, 0.000] | 1.027 [1.019, 1.170] | 0.000 [0.000, 0.000] | 0.000 |
+| A0+A1 | 40 | Platt | 0.039 [0.037, 0.041] | 0.005 [0.001, 0.008] | -0.084 [-0.281, 0.168] | 0.356 [0.239, 0.493] | 1.452 [1.266, 2.010] | 0.422 [0.277, 0.790] | 0.000 |
+| A0+A1 | 40 | intercept_only | 0.035 [0.030, 0.038] | -0.001 [-0.002, 0.003] | -0.077 [-0.632, 0.368] | 0.336 [-0.086, 0.675] | 1.032 [0.975, 1.215] | 0.000 [-0.000, 0.000] | 0.000 |
+| A0+A1 | 40 | none | 0.034 [0.029, 0.039] | 0.000 [0.000, 0.000] | -0.414 [-0.520, -0.310] | 0.000 [0.000, 0.000] | 1.032 [0.975, 1.215] | 0.000 [0.000, 0.000] | 0.000 |
+| A0 | 0 | none | 0.275 [0.275, 0.275] | NA [NA, NA] | NA [NA, NA] | NA [NA, NA] | NA [NA, NA] | NA [NA, NA] | 0.000 |
+| A0 | 10 | Platt | 0.049 [0.044, 0.055] | -0.224 [-0.229, -0.219] | -0.171 [-0.381, -0.013] | NA [NA, NA] | 2.931 [2.664, 3.267] | NA [NA, NA] | 0.000 |
+| A0 | 10 | intercept_only | 0.031 [0.028, 0.033] | -0.242 [-0.245, -0.241] | 0.246 [-0.639, 0.909] | NA [NA, NA] | 1.264 [1.247, 1.267] | NA [NA, NA] | 0.000 |
+| A0 | 10 | none | 0.273 [0.273, 0.273] | 0.000 [0.000, 0.000] | NA [NA, NA] | NA [NA, NA] | NA [NA, NA] | NA [NA, NA] | 0.000 |
+| A0 | 20 | Platt | 0.037 [0.034, 0.040] | -0.235 [-0.238, -0.232] | -0.148 [-0.408, 0.123] | NA [NA, NA] | 2.249 [2.024, 2.502] | NA [NA, NA] | 0.000 |
+| A0 | 20 | intercept_only | 0.029 [0.026, 0.032] | -0.242 [-0.246, -0.239] | -0.052 [-0.872, 0.760] | NA [NA, NA] | 1.251 [1.230, 1.347] | NA [NA, NA] | 0.000 |
+| A0 | 20 | none | 0.271 [0.271, 0.272] | 0.000 [0.000, 0.000] | NA [NA, NA] | NA [NA, NA] | NA [NA, NA] | NA [NA, NA] | 0.000 |
+| A0 | 40 | Platt | 0.031 [0.028, 0.035] | -0.244 [-0.248, -0.240] | -0.043 [-0.272, 0.267] | NA [NA, NA] | 1.806 [1.565, 2.063] | NA [NA, NA] | 0.000 |
+| A0 | 40 | intercept_only | 0.027 [0.024, 0.034] | -0.248 [-0.251, -0.241] | -0.096 [-0.440, 0.524] | NA [NA, NA] | 1.291 [1.199, 1.437] | NA [NA, NA] | 0.000 |
+| A0 | 40 | none | 0.275 [0.275, 0.276] | 0.000 [0.000, 0.000] | NA [NA, NA] | NA [NA, NA] | NA [NA, NA] | NA [NA, NA] | 0.000 |
+
+The A0 recalibration-is-ill-posed warning was a pre-result hypothesis; observed recalibrated A0 predictions did not remain at the clip bounds. This exploratory observation does not establish generalizability.
+
+### E7 (exploratory)
+
+No E7 output table is available; E7 has not been reported. The DNMT3A E3/E4 rows are not a substitute for E7.
+
+### Split conformal (exploratory)
+
+| Setting | Source coverage | Target coverage (95% CI) | Target positive | Target negative | Mean set size | Empty fraction |
+| --- | --- | --- | --- | --- | --- | --- |
+| raw | 0.906 | 0.659 [0.589, 0.728] | 0.604 | 0.680 | 1.000 | 0.000 |
+| A0 | 0.906 | 0.723 [0.653, 0.786] | 0.000 | 1.000 | 1.000 | 0.000 |
+| A0+A1 | 0.918 | 0.902 [0.855, 0.948] | 0.917 | 0.896 | 0.925 | 0.075 |
+| A2 | 0.894 | 0.884 [0.832, 0.931] | 0.646 | 0.976 | 0.902 | 0.098 |
+<!-- END GENERATED RESULTS -->
+
+## Limitations
+
+The target cohort is small (173 samples and 48 NPM1 positives in the main
+set; 157 and 48 in E6a), with wide confidence intervals; interpret results as
+trends only. This is a methods demonstration on public data, not a clinical
+model or a biological discovery. Beat AML expression is log2 RPKM and TCGA
+expression is batch-corrected RSEM; A0 was chosen after viewing target value
+ranges, not target labels. A3 failed and was not tuned. E0 was first run on
+the earlier 585-sample source set. Source test splits are small (about 85
+patients, 81 in E6a, and 116 in E6b); main-split slopes disagree with the
+20-repeat slopes. Source-test split conformal coverage is already below the
+nominal 0.9 for some settings at these sizes.
+
+Beat AML data are CC-BY-4.0; no real data are committed. Cite Bottomly et al.,
+["Integrative analysis of drug response and clinical outcome in acute myeloid leukemia"](https://doi.org/10.1016/j.ccell.2022.08.013),
+*Cancer Cell* (2022), and The Cancer Genome Atlas Research Network,
+["Genomic and epigenomic landscapes of adult de novo acute myeloid leukemia"](https://doi.org/10.1056/NEJMoa1301689),
+*New England Journal of Medicine* (2013).
+
+## Deviations and post-hoc decisions
+
+Chronologically, with decision timing disclosed:
+
+1. After E0 was run on the 585-sample source set and target expression (not
+   target labels), the main source set was restricted to initial diagnosis
+   based on source clinical composition; E6b retains the earlier rule.
+2. After examining target expression availability, missing genes were excluded
+   using availability only, without labels or model results. After viewing
+   target value ranges and raw A3 degeneracy, A0 was selected; A2 uses raw
+   values because A0 can create ties.
+3. After source-only E1/E2 results, the source 20-repeat median/IQR was made
+   the reference alongside the separately reported favorable main split;
+   Platt smoothing and clip-bound exclusions were adopted. The grid was not
+   changed. The initially misstated C-grid edge counts were corrected.
+4. After source results and before target model results, logistic/no
+   calibration was designated primary; HGB and calibration were exploratory.
+5. After E3/E4 output, confidence-interval and plot reporting were corrected;
+   valid-repeat counts were added. Subsequently, paired E5 reporting and the
+   separate E2 source reference were added, without changing fitted methods.
+6. After E5 output, the prior warning that A0 recalibration might be
+   ill-posed did not hold for the observed recalibrated predictions; it
+   remains a pre-result warning, not a conclusion.
+
 ## Repository layout
 
 - `src/cohortshift/`: data, label, feature, model, calibration, conformal,
@@ -382,6 +608,17 @@ APL excluded) and E6b (earlier 585-sample source set) analysis sets with
 `_e6a`/`_e6b`-suffixed tables and figures.
 `make run` fails clearly if the expected input files have not been fetched and
 writes the inventory and analysis-set counts.
+`make smoke` runs preparation, source experiments, cross-cohort evaluation,
+few-label recalibration, conformal evaluation and plotting on generated,
+shifted synthetic data in a temporary directory. The fixture description is
+under `tests/fixtures/`; no real data are read. To keep this wiring check fast,
+it uses one source repeat, 16 selected genes, 10 bootstrap resamples and two
+E5 draws, rather than the registered real-data budgets. `make reproduce-check`
+runs it twice and compares the SHA-256 hashes of every generated TSV table,
+including compressed expression matrices. Gzip timestamps are fixed to make
+the serialized outputs reproducible; their contents and methods are unchanged.
+Run `python scripts/update_results.py` to replace the marked results section
+with values read from existing `results/tables`; it does not run experiments.
 The inventory reports each file's parsed header and inferred identifier
 pattern, candidate clinical diagnosis/relapse columns, gene-panel coverage,
 and per-cohort sample/patient/RNA and mutation-positive counts. Mutation

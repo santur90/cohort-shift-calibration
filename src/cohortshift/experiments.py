@@ -8,7 +8,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from .adapt import adaptation_weights, adapt_features
+from .adapt import adapt_features, adaptation_weights
 from .conformal import conformal_coverage_metrics, conformal_quantile
 from .features import select_top_variance_genes
 from .shift import domain_classifier_auroc, per_gene_ks
@@ -991,7 +991,7 @@ def _equal_count_reliability_rows(
         {
             "method": method,
             "bin": index,
-            "bin_count": int(len(indices)),
+            "bin_count": len(indices),
             "mean_predicted_probability": float(probabilities[indices].mean()),
             "observed_fraction": float(labels[indices].mean()),
         }

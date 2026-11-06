@@ -4,8 +4,8 @@ from io import StringIO
 import numpy as np
 import pandas as pd
 import pytest
-from matplotlib.container import ErrorbarContainer
 from matplotlib import pyplot as plt
+from matplotlib.container import ErrorbarContainer
 from scipy.special import expit
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import roc_auc_score
@@ -30,6 +30,13 @@ from cohortshift.data import (
     split_patient_ids,
     split_patient_ids_stratified,
 )
+from cohortshift.experiments import (
+    E3_METHODS,
+    _append_repeat_summaries,
+    _assemble_cross_cohort_tables,
+    _bootstrap_metric_intervals,
+    predict_adapted_probabilities,
+)
 from cohortshift.features import (
     cohort_standardize,
     filter_jointly_complete_genes,
@@ -43,11 +50,11 @@ from cohortshift.labels import (
     labels_from_maf_rows,
     mutation_labels,
 )
+from cohortshift.plots import save_coverage_plot, save_target_reliability_plot
 from cohortshift.shift import (
     E0_METHODS,
     domain_classifier_auroc,
     domain_classifier_weights,
-    per_gene_ks,
     run_e0_shift,
     target_expression_a0,
 )
@@ -58,14 +65,6 @@ from cohortshift.source_experiments import (
     run_source_experiments,
     select_repeat_genes,
 )
-from cohortshift.experiments import (
-    E3_METHODS,
-    _bootstrap_metric_intervals,
-    _append_repeat_summaries,
-    _assemble_cross_cohort_tables,
-    predict_adapted_probabilities,
-)
-from cohortshift.plots import save_coverage_plot, save_target_reliability_plot
 
 
 def test_cbioportal_clinical_metadata_header(tmp_path):
@@ -316,7 +315,7 @@ def test_patient_splits_are_disjoint_and_repeatable():
     )
     patients_by_split = {
         split: {patient for patient, assigned in assignments.items() if assigned == split}
-        for split in {"train", "validation", "test"}
+        for split in ("train", "validation", "test")
     }
     assert not (patients_by_split["train"] & patients_by_split["validation"])
     assert not (patients_by_split["train"] & patients_by_split["test"])
@@ -920,7 +919,7 @@ def test_e3_predictions_are_label_free_for_target_and_seed_stable():
 
 
 def test_degenerate_a3_prediction_reports_failed_status(monkeypatch):
-    import cohortshift.experiments as experiments
+    from cohortshift import experiments
 
     rng = np.random.default_rng(128)
     source = pd.DataFrame(rng.normal(size=(60, 5)), columns=list("abcde"))
@@ -951,7 +950,7 @@ def test_degenerate_a3_prediction_reports_failed_status(monkeypatch):
 
 
 def test_raw_a3_uses_normalized_importance_weights(monkeypatch):
-    import cohortshift.experiments as experiments
+    from cohortshift import experiments
 
     rng = np.random.default_rng(128)
     source = pd.DataFrame(rng.normal(size=(60, 5)), columns=list("abcde"))
@@ -993,7 +992,7 @@ def test_raw_a3_uses_normalized_importance_weights(monkeypatch):
 def test_cross_cohort_tables_are_deterministic_and_include_registered_outputs(
     monkeypatch,
 ):
-    import cohortshift.experiments as experiments
+    from cohortshift import experiments
 
     bootstrap_calls = []
 
@@ -1195,7 +1194,7 @@ def test_repeat_slope_summaries_require_15_valid_repeats():
 def test_target_plots_show_bootstrap_intervals_and_unconnected_counted_bins(
     tmp_path, monkeypatch
 ):
-    import cohortshift.plots as plots
+    from cohortshift import plots
 
     captured_figures = []
     original_subplots = plots.plt.subplots
@@ -1378,7 +1377,7 @@ def test_e5_summary_reports_failure_fraction():
 
 
 def test_e5_paired_differences_use_same_held_out_samples():
-    from cohortshift.recalibration import run_few_label_recalibration, _evaluate
+    from cohortshift.recalibration import _evaluate, run_few_label_recalibration
 
     ids, p, y = _e5_toy()
     draws, summary = run_few_label_recalibration(

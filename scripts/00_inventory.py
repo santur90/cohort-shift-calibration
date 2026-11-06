@@ -6,8 +6,8 @@ from __future__ import annotations
 import csv
 import re
 import sys
+from collections.abc import Iterable
 from pathlib import Path
-from typing import Iterable
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
@@ -18,8 +18,8 @@ from cohortshift.data import (  # noqa: E402
     matrix_sample_columns,
     mutation_profile_panels,
     mutation_profile_samples,
-    select_one_sample_per_patient,
     sample_id_format,
+    select_one_sample_per_patient,
 )
 from cohortshift.labels import (  # noqa: E402
     diagnosis_relapse_candidates,

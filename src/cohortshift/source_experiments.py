@@ -11,15 +11,15 @@ import numpy as np
 import pandas as pd
 from scipy.optimize import brentq
 from scipy.special import expit
-from sklearn.isotonic import IsotonicRegression
 from sklearn.exceptions import ConvergenceWarning
-from sklearn.model_selection import GridSearchCV, StratifiedKFold, train_test_split
+from sklearn.isotonic import IsotonicRegression
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import (
     average_precision_score,
     brier_score_loss,
     roc_auc_score,
 )
+from sklearn.model_selection import GridSearchCV, StratifiedKFold, train_test_split
 
 from .calibration import PlattScaler, fit_platt_scaler
 from .features import select_top_variance_genes
@@ -67,7 +67,7 @@ def _probability_bins(
         bin_rows.append(
             {
                 "bin": bin_index,
-                "bin_count": int(len(indices)),
+                "bin_count": len(indices),
                 "mean_predicted_probability": float(p[indices].mean()),
                 "observed_fraction": float(y[indices].mean()),
             }
