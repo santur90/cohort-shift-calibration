@@ -1323,7 +1323,8 @@ def test_e5_drawn_samples_excluded_from_eval_predictions(monkeypatch):
     )
     pc = np.clip(p, 1e-6, 1 - 1e-6)
     by_id = dict(zip(ids, pc))
-    for row, new_p in zip(draws.itertuples(), captured):
+    recalibrated_rows = draws.loc[draws["method"] != "none"]
+    for row, new_p in zip(recalibrated_rows.itertuples(), captured):
         drawn_p = {by_id[s] for s in row.drawn_samples.split(";")}
         assert not drawn_p & set(new_p.tolist())
 
@@ -1373,7 +1374,98 @@ def test_e5_summary_reports_failure_fraction():
     _, summary = run_few_label_recalibration(
         ids, p, y, setting="t", seed=4, budgets=(10,), n_draws=3
     )
-    assert "fraction_fit_failed" in summary and len(summary) == 2
+    assert "fraction_fit_failed" in summary and len(summary) == 3
+
+
+def test_e5_paired_differences_use_same_held_out_samples():
+    from cohortshift.recalibration import run_few_label_recalibration, _evaluate
+
+    ids, p, y = _e5_toy()
+    draws, summary = run_few_label_recalibration(
+        ids, p, y, setting="t", seed=9, budgets=(0, 10), n_draws=4
+    )
+    index = {sample: i for i, sample in enumerate(ids)}
+    for draw in range(4):
+        group = draws.loc[(draws["k"] == 10) & (draws["draw"] == draw)]
+        assert set(group["method"]) == {"none", "intercept_only", "Platt"}
+        assert group["drawn_samples"].nunique() == 1
+        excluded = {index[s] for s in group.iloc[0]["drawn_samples"].split(";")}
+        held = [i for i in range(len(ids)) if i not in excluded]
+        baseline = group.set_index("method").loc["none"]
+        expected = _evaluate(y[held], p[held])
+        for metric in ("brier", "calibration_intercept", "calibration_slope"):
+            assert baseline[metric] == pytest.approx(expected[metric])
+            for _, row in group.loc[group["method"] != "none"].iterrows():
+                if not row["fit_failed"]:
+                    assert row[f"{metric}_difference_vs_none"] == pytest.approx(
+                        row[metric] - baseline[metric]
+                    )
+    for method in ("intercept_only", "Platt"):
+        group = draws.loc[(draws["k"] == 10) & (draws["method"] == method)]
+        row = summary.loc[(summary["k"] == 10) & (summary["method"] == method)].iloc[0]
+        for metric in ("brier", "calibration_intercept", "calibration_slope"):
+            differences = group[f"{metric}_difference_vs_none"].dropna()
+            for stat, q in (("median", 0.5), ("q1", 0.25), ("q3", 0.75)):
+                assert row[f"{metric}_difference_vs_none_{stat}"] == pytest.approx(
+                    differences.quantile(q)
+                )
+    assert pd.isna(
+        summary.loc[summary["k"] == 0, "brier_difference_vs_none_median"].iloc[0]
+    )
+
+
+def test_e2_source_reference_is_separate_and_obeys_validity_rule():
+    from cohortshift.experiments import add_e2_source_reference
+
+    source = pd.DataFrame({
+        "row_type": ["repeat"] * 20,
+        "repeat": list(range(1, 21)),
+        "seed": list(range(7101, 7121)),
+        "model": ["logistic"] * 20,
+        "calibrator": ["none"] * 20,
+        "frac_pred_at_clip_bounds": [0.0] * 15 + [0.1] * 5,
+        "brier": [0.1] * 20,
+        "calibration_slope": list(range(20)),
+        "calibration_intercept": list(range(20, 40)),
+    })
+    cross = pd.DataFrame({
+        "model": ["logistic", "logistic"], "calibrator": ["none", "none"],
+        "outcome": ["NPM1", "DNMT3A"], "source_repeat_median_calibration_slope": [99., 98.],
+    })
+    splits = pd.DataFrame({
+        "repeat": list(range(1, 21)), "seed": list(range(7101, 7121)),
+        "split_set": ["20_repeats"] * 20,
+    })
+    result = add_e2_source_reference(cross, source, splits)
+    assert result.loc[0, "source_repeat_median_calibration_slope"] == 99.
+    assert result.loc[0, "source_e2_median_calibration_slope"] == 7.
+    assert result.loc[0, "source_e2_median_brier"] == pytest.approx(0.1)
+    assert result.loc[0, "source_e2_calibration_slope_n_valid_repeats"] == 15
+    assert pd.isna(result.loc[1, "source_e2_median_calibration_slope"])
+    source.loc[14, "frac_pred_at_clip_bounds"] = 0.1
+    assert pd.isna(add_e2_source_reference(cross, source, splits).loc[0, "source_e2_median_calibration_slope"])
+    splits.loc[0, "seed"] = 1
+    with pytest.raises(ValueError, match="seeds do not match"):
+        add_e2_source_reference(cross, source, splits)
+
+
+def test_e5_paired_calibration_differences_respect_clip_rule(monkeypatch):
+    from cohortshift import recalibration as rc
+
+    ids, p, y = _e5_toy()
+    p[:30] = 1e-6
+    monkeypatch.setattr(
+        rc, "_recalibrate",
+        lambda method, drawn_p, drawn_y, new_p: np.linspace(0.1, 0.9, len(new_p)),
+    )
+    draws, summary = rc.run_few_label_recalibration(
+        ids, p, y, setting="t", seed=5, budgets=(10,), n_draws=2
+    )
+    methods = draws.loc[draws["method"] != "none"]
+    assert methods["calibration_slope_difference_vs_none"].isna().all()
+    assert methods["calibration_intercept_difference_vs_none"].isna().all()
+    assert methods["brier_difference_vs_none"].notna().all()
+    assert summary.loc[summary["method"] != "none", "calibration_slope_difference_vs_none_n_valid"].eq(0).all()
 
 
 def test_repeated_split_table_has_no_patient_overlap_and_is_deterministic():

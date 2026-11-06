@@ -313,6 +313,66 @@ def prepare_cross_cohort_predictions(
     }
 
 
+def add_e2_source_reference(
+    cross_cohort: pd.DataFrame,
+    source_e2: pd.DataFrame,
+    repeated_splits: pd.DataFrame,
+) -> pd.DataFrame:
+    """Add the saved E2 source reference without changing E3/E4 predictions."""
+    required = {
+        "row_type", "repeat", "seed", "model", "calibrator",
+        "frac_pred_at_clip_bounds", "brier", "calibration_slope", "calibration_intercept",
+    }
+    if not required.issubset(source_e2.columns):
+        raise ValueError("E2 source table is missing required reference columns")
+    if not {"repeat", "seed", "split_set"}.issubset(repeated_splits.columns):
+        raise ValueError("saved source splits are missing repeat seeds")
+    split_seeds = repeated_splits.loc[
+        repeated_splits["split_set"] == "20_repeats", ["repeat", "seed"]
+    ].drop_duplicates()
+    if len(split_seeds) != 20 or split_seeds["repeat"].nunique() != 20:
+        raise ValueError("saved source splits must have 20 distinct repeat seeds")
+    expected_seeds = {
+        int(repeat): int(seed) for repeat, seed in split_seeds.itertuples(index=False)
+    }
+    repeats = source_e2.loc[source_e2["row_type"] == "repeat"].copy()
+    references = []
+    for (model, calibrator), group in repeats.groupby(["model", "calibrator"]):
+        if len(group) != 20 or group["repeat"].nunique() != 20:
+            raise ValueError(f"E2 reference for {model}/{calibrator} requires 20 repeats")
+        observed_seeds = {
+            int(repeat): int(seed) for repeat, seed in group[["repeat", "seed"]].itertuples(index=False)
+        }
+        if observed_seeds != expected_seeds:
+            raise ValueError(f"E2 reference seeds do not match saved splits for {model}/{calibrator}")
+        reference: dict[str, object] = {"model": model, "calibrator": calibrator}
+        for metric in ("brier", "calibration_slope", "calibration_intercept"):
+            values = pd.to_numeric(group[metric], errors="raise")
+            if metric != "brier":
+                values = values.where(group["frac_pred_at_clip_bounds"] <= 0.05)
+            values = values.dropna()
+            values = values[np.isfinite(values)]
+            reference[f"source_e2_{metric}_n_valid_repeats"] = len(values)
+            for name, quantile in (("median", 0.5), ("q1", 0.25), ("q3", 0.75)):
+                reference[f"source_e2_{name}_{metric}"] = (
+                    float(values.quantile(quantile))
+                    if len(values) >= (1 if metric == "brier" else 15) else np.nan
+                )
+        references.append(reference)
+    if not references:
+        raise ValueError("E2 source table contains no repeat rows")
+    reference_frame = pd.DataFrame(references)
+    result = cross_cohort.merge(
+        reference_frame, on=["model", "calibrator"], how="left", validate="many_to_one"
+    )
+    npm1 = result["outcome"] == "NPM1"
+    if result.loc[npm1, "source_e2_calibration_slope_n_valid_repeats"].isna().any():
+        raise ValueError("E2 source reference is missing a model/calibrator combination")
+    reference_columns = [column for column in reference_frame if column not in {"model", "calibrator"}]
+    result.loc[~npm1, reference_columns] = np.nan
+    return result
+
+
 def _prediction_metrics(
     labels: np.ndarray, probabilities: np.ndarray
 ) -> dict[str, float | int | str]:

@@ -13,6 +13,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
 from cohortshift.experiments import (  # noqa: E402
+    add_e2_source_reference,
     final_evaluation,
     prepare_cross_cohort_predictions,
 )
@@ -72,8 +73,9 @@ def main(analysis_set: str = "main") -> int:
         SPLITS / "beat_aml_e1_e2_repeated_splits.tsv",
         SPLITS / "beat_aml_e1_e2_selected_genes.tsv",
         SPLITS / f"tcga_laml_splits{suffix}.tsv",
+        TABLES / "e2_calibration.tsv",
     )
-    optional = () if analysis_set == "main" else (required[6], required[7])
+    optional = () if analysis_set == "main" else (required[6], required[7], required[9])
     missing = [
         path for path in required if not path.is_file() and path not in optional
     ]
@@ -203,6 +205,10 @@ def main(analysis_set: str = "main") -> int:
         key: pd.concat([result[key] for result in result_sets], ignore_index=True)
         for key in ("cross_cohort", "repeats", "conformal", "reliability")
     }
+    if analysis_set == "main":
+        results["cross_cohort"] = add_e2_source_reference(
+            results["cross_cohort"], pd.read_csv(required[9], sep="\t"), repeated_splits
+        )
     TABLES.mkdir(parents=True, exist_ok=True)
     FIGURES.mkdir(parents=True, exist_ok=True)
     results["cross_cohort"].to_csv(

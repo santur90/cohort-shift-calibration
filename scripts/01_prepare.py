@@ -128,10 +128,21 @@ def _profiled_count(labels: pd.DataFrame, gene: str) -> int:
     return int(labels[gene].notna().sum())
 
 
+def _output_path(directory: Path, filename: str, analysis_set: str) -> Path:
+    if analysis_set not in {"main", "e6a", "e6b"}:
+        raise ValueError(f"Unknown analysis set: {analysis_set}")
+    if Path(filename).name != filename:
+        raise ValueError("output filename must not contain a directory")
+    suffix = "" if analysis_set == "main" else f"_{analysis_set}"
+    stem, dot, extension = filename.partition(".")
+    if not dot:
+        raise ValueError("output filename must have an extension")
+    return directory / f"{stem}{suffix}.{extension}"
+
+
 def main(analysis_set: str = "main") -> int:
     if analysis_set not in {"main", "e6a", "e6b"}:
         raise ValueError(f"Unknown analysis set: {analysis_set}")
-    artifact_suffix = "" if analysis_set == "main" else f"_{analysis_set}"
     PROCESSED_DIR.mkdir(parents=True, exist_ok=True)
     RESULTS_TABLES.mkdir(parents=True, exist_ok=True)
     SPLITS_DIR.mkdir(parents=True, exist_ok=True)
@@ -242,7 +253,7 @@ def main(analysis_set: str = "main") -> int:
     shared_genes = source_expression.columns.tolist()
     if analysis_set == "main":
         with (
-            PROCESSED_DIR / "jointly_complete_gene_names.txt"
+            _output_path(PROCESSED_DIR, "jointly_complete_gene_names.txt", analysis_set)
         ).open("w", encoding="utf-8") as handle:
             handle.write("\n".join(shared_genes) + "\n")
     print(
@@ -273,13 +284,13 @@ def main(analysis_set: str = "main") -> int:
         expression = values["expression"]
         values["expression"] = expression
         expression.to_csv(
-            PROCESSED_DIR / f"aligned_{cohort}{artifact_suffix}.tsv.gz",
+            _output_path(PROCESSED_DIR, f"aligned_{cohort}.tsv.gz", analysis_set),
             sep="\t",
             index_label="SAMPLE_ID",
             compression="gzip",
         )
         values["labels"].to_csv(
-            PROCESSED_DIR / f"labels_{cohort}{artifact_suffix}.tsv",
+            _output_path(PROCESSED_DIR, f"labels_{cohort}.tsv", analysis_set),
             sep="\t",
             index_label="SAMPLE_ID",
         )
@@ -399,7 +410,7 @@ def main(analysis_set: str = "main") -> int:
         )
 
     for cohort, rows in split_rows.items():
-        with (SPLITS_DIR / f"{cohort}_splits{artifact_suffix}.tsv").open(
+        with _output_path(SPLITS_DIR, f"{cohort}_splits.tsv", analysis_set).open(
             "w", newline="", encoding="utf-8"
         ) as handle:
             writer = csv.DictWriter(
@@ -410,7 +421,7 @@ def main(analysis_set: str = "main") -> int:
             writer.writeheader()
             writer.writerows(rows)
     with (
-        SPLITS_DIR / f"beat_aml_splits_dnmt3a_e7{artifact_suffix}.tsv"
+        _output_path(SPLITS_DIR, "beat_aml_splits_dnmt3a_e7.tsv", analysis_set)
     ).open("w", newline="", encoding="utf-8") as handle:
         writer = csv.DictWriter(
             handle,
@@ -419,13 +430,13 @@ def main(analysis_set: str = "main") -> int:
         )
         writer.writeheader()
         writer.writerows(dnmt3a_split_rows)
-    with (SPLITS_DIR / f"seeds{artifact_suffix}.json").open(
+    with _output_path(SPLITS_DIR, "seeds.json", analysis_set).open(
         "w", encoding="utf-8"
     ) as handle:
         json.dump(seed_info, handle, indent=2)
         handle.write("\n")
 
-    with (SPLITS_DIR / f"beat_aml_split_counts{artifact_suffix}.tsv").open(
+    with _output_path(SPLITS_DIR, "beat_aml_split_counts.tsv", analysis_set).open(
         "w", newline="", encoding="utf-8"
     ) as handle:
         fields = (
@@ -440,7 +451,7 @@ def main(analysis_set: str = "main") -> int:
         writer.writeheader()
         writer.writerows(beat_aml_split_counts)
 
-    analysis_path = RESULTS_TABLES / f"analysis_set{artifact_suffix}.tsv"
+    analysis_path = _output_path(RESULTS_TABLES, "analysis_set.tsv", analysis_set)
     with analysis_path.open("w", newline="", encoding="utf-8") as handle:
         fieldnames = (
             "cohort",
@@ -473,7 +484,7 @@ def main(analysis_set: str = "main") -> int:
     assert not cohort_data["tcga_laml"]["expression"].loc[
         :, selected_genes
     ].isna().any().any()
-    with (PROCESSED_DIR / f"source_train_top2000_genes{artifact_suffix}.txt").open(
+    with _output_path(PROCESSED_DIR, "source_train_top2000_genes.txt", analysis_set).open(
         "w", encoding="utf-8"
     ) as handle:
         handle.write("\n".join(selected_genes) + "\n")

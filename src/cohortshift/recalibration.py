@@ -115,6 +115,28 @@ def run_few_label_recalibration(
         for draw in range(n_draws):
             drawn = draw_stratified_indices(y, k, rng)
             held_out = np.setdiff1d(np.arange(len(y)), drawn)
+            baseline = _evaluate(y[held_out], p[held_out])
+            baseline_row: dict[str, object] = {
+                "setting": setting, "k": k, "draw": draw, "method": "none",
+                "drawn_samples": ";".join(ids[drawn]), "n_eval": len(held_out),
+                "fit_failed": False,
+                "slope_fit_failed": bool(baseline["calibration_slope_fit_failed"]),
+                "frac_pred_at_clip_bounds": baseline["frac_pred_at_clip_bounds"],
+                **{name: float(baseline[name]) for name in E5_METRICS},
+                **{
+                    f"{name}_difference_vs_none": (
+                        0.0
+                        if np.isfinite(baseline[name])
+                        and not (
+                            name == "calibration_slope"
+                            and baseline["calibration_slope_fit_failed"]
+                        )
+                        else np.nan
+                    )
+                    for name in E5_METRICS
+                },
+            }
+            draw_rows.append(baseline_row)
             for method in E5_METHODS:
                 row: dict[str, object] = {
                     "setting": setting, "k": k, "draw": draw, "method": method,
@@ -132,6 +154,16 @@ def run_few_label_recalibration(
                     row["frac_pred_at_clip_bounds"] = metrics["frac_pred_at_clip_bounds"]
                     row["slope_fit_failed"] = bool(metrics["calibration_slope_fit_failed"])
                     row["fit_failed"] = row["slope_fit_failed"]
+                    if not row["fit_failed"]:
+                        for name in E5_METRICS:
+                            if (
+                                name == "calibration_slope"
+                                and baseline["calibration_slope_fit_failed"]
+                            ):
+                                continue
+                            row[f"{name}_difference_vs_none"] = (
+                                float(metrics[name]) - float(baseline[name])
+                            )
                 except (ValueError, RuntimeError, FloatingPointError):
                     row["fit_failed"] = True
                 draw_rows.append(row)
@@ -150,9 +182,20 @@ def run_few_label_recalibration(
         for name in E5_METRICS:
             values = group.loc[~group["fit_failed"], name].dropna()
             row[f"{name}_n_valid"] = len(values)
+            difference_column = f"{name}_difference_vs_none"
+            differences = (
+                group.loc[~group["fit_failed"], difference_column].dropna()
+                if difference_column in group.columns
+                else pd.Series(dtype=float)
+            )
+            row[f"{difference_column}_n_valid"] = len(differences)
             for label, quantile in (("median", 0.5), ("q1", 0.25), ("q3", 0.75)):
                 row[f"{name}_{label}"] = (
                     float(values.quantile(quantile)) if len(values) else np.nan
+                )
+                row[f"{difference_column}_{label}"] = (
+                    float(differences.quantile(quantile))
+                    if len(differences) else np.nan
                 )
         summary_rows.append(row)
     return draws, pd.DataFrame(summary_rows)

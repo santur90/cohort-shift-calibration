@@ -181,6 +181,22 @@ revision are disclosed below.
   intervals and positive- and negative-class coverage; reliability plots show
   points with bin-count annotations rather than connecting bins. These are
   reporting-only fixes; no method or setting changes.
+- **Additional reporting corrections (after viewing E3/E4 output):** E5 now
+  also evaluates the uncalibrated predictions on each draw's identical
+  held-out samples and reports paired method-minus-none median and IQR for
+  Brier score, intercept, and slope. The k=0 row is unchanged. For the main
+  NPM1 analysis, E3/E4 tables separately report the saved E2 source-repeat
+  Brier/slope/intercept reference (`source_e2_*`), in addition to the existing
+  setting-specific E3 source-repeat estimates (`source_repeat_*`). E2 and E3
+  use the same saved patient splits and genes, but E3 re-tunes C separately
+  for each setting: E2 uses repeat seeds 7101–7120 for its shuffled training
+  CV, while E3 uses 4201 plus the repeat number. Thus they can select
+  different C values even for A0, where source features are unchanged; in
+  the saved outputs C differed in 11 of 20 repeats. Both apply the >5%
+  clip-bound NA rule. E3's source-reference median/IQR is additionally NA
+  when fewer than 15 repeats are valid. The saved E2 reference uses this
+  same minimum-valid rule when reported in E3. These additions correct the
+  reference reporting without changing or refitting E3/E4 models.
 - **Split conformal:** use `alpha=0.1` and nonconformity
   `1 - p(true class)`. Compute the finite-sample corrected quantile from
   source CALIBRATION scores as rank
@@ -358,7 +374,8 @@ evaluation function. Outputs are
 `make e5` runs the pre-registered few-label recalibration
 (`scripts/05_few_label.py`) on frozen source-trained E3 predictions and writes
 `results/tables/e5_few_label.tsv` (median/IQR summaries),
-`results/tables/e5_few_label_draws.tsv` (per-draw rows with drawn sample IDs),
+`results/tables/e5_few_label_draws.tsv` (per-draw rows with drawn sample IDs
+and paired differences),
 and `results/splits/e5_seeds.json`. `make e6` regenerates the E6a (AML,
 APL excluded) and E6b (earlier 585-sample source set) analysis sets with
 `scripts/01_prepare.py --analysis-set` and reruns E3/E4 on each, writing
