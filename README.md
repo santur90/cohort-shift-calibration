@@ -189,10 +189,38 @@ revision are disclosed below.
   and target samples under every registered setting. Bootstrap target
   coverage with the same 2,000 patient-level resamples and 95% percentile
   intervals.
-- **E6a (sensitivity analysis):** restrict to `ONCOTREE_CODE == "AML"` and
-  exclude APL samples in both cohorts; rerun E3/E4.
-- **E6b (exploratory):** add back the fallback samples selected by the
-  previous 585-sample rule; rerun E3/E4.
+- **E5 (few-label target recalibration; pre-registered before any E5 run):**
+  the model is trained and calibrated (no calibrator) on source data only,
+  exactly as in E3. The primary setting is A0+A1 with logistic regression
+  and no calibrator. A0 is secondary and is reported with the note that most
+  of its predictions sit at the probability clip bounds, so recalibration is
+  ill-posed there. Target label budgets are `k in {0, 10, 20, 40}`. For each
+  `k > 0`, draw 200 random target subsets stratified by label (proportional
+  allocation with at least one sample per class where possible), with fixed
+  saved seeds. Methods: (i) recalibration-in-the-large (intercept only, slope
+  fixed at 1, fitted by offset) and (ii) Platt scaling with Platt's smoothed
+  targets on `logit(p)`. The k drawn samples are used only for recalibration
+  and are EXCLUDED from evaluation; each draw is used once. On the remaining
+  target samples report the median and IQR over draws of Brier score,
+  calibration intercept, and calibration slope, plus the fraction of draws
+  where the fit failed (non-convergence, one-class draw, or slope fit
+  failure). `k = 0` applies no recalibration and must equal the E3 result on
+  all target samples. The E5 draws never feed back into any model, feature,
+  or hyperparameter choice. E5 is exploratory.
+- **E6a (sensitivity analysis):** restrict both cohorts to
+  `ONCOTREE_CODE == "AML"` and exclude APL samples in both cohorts, using the
+  registered clinical (`CANCER_TYPE_DETAILED`) plus structural-variant
+  PML-RARA evidence union. Rerun E3/E4 in full, including regeneration of the
+  60/20/20 source split (stratified on NPM1), the 20 repeated splits, and the
+  top-2,000 gene selection on the new source TRAIN split. Print N and NPM1
+  positives per cohort and per split before any model is fit. Methods and
+  settings are unchanged from E3/E4.
+- **E6b (exploratory):** use the earlier 585-sample source set (the
+  fallback-allowed rule); rerun E3/E4 with the same unchanged methods,
+  including split and gene-selection regeneration.
+- E5, E6a, and E6b add no confirmatory comparisons: the only confirmatory
+  comparisons remain the two registered above, and everything else is
+  exploratory.
 - **Primary outcome:** NPM1 mutation status. Primary evaluation on TCGA-LAML
   uses Brier score, calibration intercept and slope, and AUROC.
 - **Secondary outcome:** DNMT3A mutation status, evaluated only if the
