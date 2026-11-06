@@ -208,6 +208,36 @@ def _patient_splits(
     }
 
 
+def repeated_split_table(
+    source_labels: pd.Series,
+    patient_by_sample: Mapping[str, str],
+    *,
+    seeds: Sequence[int] = SOURCE_EXPERIMENT_SEEDS,
+) -> pd.DataFrame:
+    """Regenerate the repeated 60/20/20 patient splits (source labels only)."""
+    labels_by_patient = {
+        patient_by_sample[sample]: int(source_labels.loc[sample])
+        for sample in source_labels.index
+    }
+    rows = []
+    for repeat, seed in enumerate(seeds, start=1):
+        patient_splits = _patient_splits(labels_by_patient, seed=int(seed))
+        for split, patients in patient_splits.items():
+            rows.extend(
+                {
+                    "repeat": repeat,
+                    "seed": int(seed),
+                    "sample_id": sample,
+                    "patient_id": patient_by_sample[sample],
+                    "split": split,
+                    "split_set": "20_repeats",
+                }
+                for sample in sorted(source_labels.index)
+                if patient_by_sample[sample] in patients
+            )
+    return pd.DataFrame(rows)
+
+
 def _tuned_estimators(
     train_expression: pd.DataFrame,
     train_labels: np.ndarray,

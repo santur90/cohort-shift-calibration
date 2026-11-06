@@ -153,6 +153,8 @@ def prepare_cross_cohort_predictions(
     repeat_genes: dict[int, list[str]] | None = None,
     seed: int = 3101,
     outcome: str = "NPM1",
+    methods: tuple[str, ...] = E3_METHODS,
+    include_repeats: bool = True,
 ) -> dict[str, object]:
     """Prepare all feature-only E3/E4 predictions without loading target labels."""
     if outcome not in {"NPM1", "DNMT3A"}:
@@ -225,7 +227,7 @@ def prepare_cross_cohort_predictions(
         target_x = target_expression.loc[:, genes]
         source_all_x = source_expression.loc[:, genes]
         domain_diagnostics: dict[str, dict[str, float | str]] = {}
-        for method in E3_METHODS:
+        for method in methods:
             domain_method = "none" if method == "raw" else method
             domain_auc = domain_classifier_auroc(
                 source_all_x, target_x, method=domain_method, seed=seed
@@ -246,7 +248,7 @@ def prepare_cross_cohort_predictions(
         train_y = source_labels.loc[train_ids].to_numpy(dtype=int)
         calibration_y = source_labels.loc[calibration_ids].to_numpy(dtype=int)
         test_y = source_labels.loc[test_ids].to_numpy(dtype=int)
-        for method in E3_METHODS:
+        for method in methods:
             result = predict_adapted_probabilities(
                 train_x,
                 train_y,
@@ -285,7 +287,9 @@ def prepare_cross_cohort_predictions(
     )
     repeat_entries: list[dict[str, object]] = []
     repeats = repeated_splits.loc[repeated_splits["split_set"] == "20_repeats"]
-    if repeats.empty:
+    if not include_repeats:
+        repeats = repeats.iloc[0:0]
+    elif repeats.empty:
         raise ValueError("saved repeated split table has no 20-repeat assignments")
     for repeat, repeat_rows in repeats.groupby("repeat", sort=True):
         values = repeat_rows.set_index("sample_id")["split"].astype(str).to_dict()

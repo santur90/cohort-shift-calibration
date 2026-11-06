@@ -1,6 +1,6 @@
 PYTHON ?= python3
 
-.PHONY: data run check-data check-selection check-apl prepare e0 e1 e2 e3 smoke test
+.PHONY: data run check-data check-selection check-apl prepare e0 e1 e2 e3 e5 e6 smoke test
 
 data:
 	bash scripts/fetch_data.sh
@@ -32,8 +32,17 @@ e2:
 e3:
 	$(PYTHON) scripts/04_cross_cohort.py
 
+e5:
+	$(PYTHON) scripts/05_few_label.py
+
+e6:
+	$(PYTHON) scripts/01_prepare.py --analysis-set e6a
+	$(PYTHON) scripts/04_cross_cohort.py --analysis-set e6a
+	$(PYTHON) scripts/01_prepare.py --analysis-set e6b
+	$(PYTHON) scripts/04_cross_cohort.py --analysis-set e6b
+
 smoke:
-	$(PYTHON) -c "import cohortshift; from cohortshift import data, labels, features, models, calibration, conformal, shift, adapt, experiments, plots, source_experiments; print('cohortshift imports OK')"
+	$(PYTHON) -c "import cohortshift; from cohortshift import data, labels, features, models, calibration, conformal, shift, adapt, experiments, plots, source_experiments, recalibration; print('cohortshift imports OK')"
 
 test:
 	$(PYTHON) -m pytest

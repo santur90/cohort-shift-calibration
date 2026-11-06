@@ -1273,3 +1273,118 @@ def test_target_bootstrap_metrics_are_bit_identical_for_same_seed():
         labels, probabilities, patients, seed=190, n_resamples=25
     )
     assert first == second
+
+
+def _e5_toy(n=120, seed=7):
+    rng = np.random.default_rng(seed)
+    y = (rng.random(n) < 0.3).astype(int)
+    p = np.clip(expit(rng.normal(-1 + 2 * y, 1.0)), 0.01, 0.99)
+    p = p + np.arange(n) * 1e-9  # unique per-sample values
+    ids = [f"S{i:03d}" for i in range(n)]
+    return ids, p, y
+
+
+def test_e5_never_evaluates_on_drawn_samples(monkeypatch):
+    from cohortshift import recalibration as rc
+
+    ids, p, y = _e5_toy()
+    seen = []
+    original = rc._prediction_metrics
+
+    def spy(labels, probabilities):
+        seen.append((len(labels), np.asarray(probabilities).copy()))
+        return original(labels, probabilities)
+
+    monkeypatch.setattr(rc, "_prediction_metrics", spy)
+    draws, _ = rc.run_few_label_recalibration(
+        ids, p, y, setting="t", seed=1, budgets=(10, 20), n_draws=3
+    )
+    assert (draws["n_eval"] == len(ids) - draws["k"]).all()
+    assert len(seen) == len(draws)
+    index = {s: i for i, s in enumerate(ids)}
+    for row in draws.itertuples():
+        drawn = row.drawn_samples.split(";")
+        assert len(drawn) == row.k and len(set(drawn)) == row.k
+        assert all(s in index for s in drawn)
+
+
+def test_e5_drawn_samples_excluded_from_eval_predictions(monkeypatch):
+    from cohortshift import recalibration as rc
+
+    ids, p, y = _e5_toy()
+    captured = []
+    monkeypatch.setattr(
+        rc,
+        "_recalibrate",
+        lambda method, dp, dy, new_p: (captured.append(new_p.copy()), new_p)[1],
+    )
+    draws, _ = rc.run_few_label_recalibration(
+        ids, p, y, setting="t", seed=2, budgets=(10,), n_draws=2
+    )
+    pc = np.clip(p, 1e-6, 1 - 1e-6)
+    by_id = dict(zip(ids, pc))
+    for row, new_p in zip(draws.itertuples(), captured):
+        drawn_p = {by_id[s] for s in row.drawn_samples.split(";")}
+        assert not drawn_p & set(new_p.tolist())
+
+
+def test_e5_k0_equals_e3_metrics():
+    from cohortshift import recalibration as rc
+    from cohortshift.experiments import _prediction_metrics
+    from cohortshift.source_experiments import _apply_calibrator
+
+    ids, p, y = _e5_toy()
+    _, summary = rc.run_few_label_recalibration(
+        ids, p, y, setting="t", seed=3, budgets=(0,), n_draws=2
+    )
+    row = summary.iloc[0]
+    expected = _prediction_metrics(y, _apply_calibrator("none", None, p))
+    assert row["method"] == "none" and row["median_n_eval"] == len(y)
+    assert row["brier_median"] == pytest.approx(expected["brier"])
+    assert row["calibration_slope_median"] == pytest.approx(
+        expected["calibration_slope"]
+    )
+
+
+def test_e5_draws_are_stratified_and_deterministic():
+    from cohortshift.recalibration import draw_stratified_indices
+
+    _, _, y = _e5_toy()
+    first = draw_stratified_indices(y, 10, np.random.default_rng(5))
+    second = draw_stratified_indices(y, 10, np.random.default_rng(5))
+    assert (first == second).all() and len(first) == 10
+    assert set(y[first]) == {0, 1}
+
+
+def test_e5_intercept_only_keeps_slope_one():
+    from cohortshift.recalibration import _fit_intercept_only
+    from cohortshift.source_experiments import _clipped_logit
+
+    ids, p, y = _e5_toy(n=200)
+    shift = _fit_intercept_only(p, y)
+    fitted = expit(_clipped_logit(p) + shift)
+    assert fitted.sum() == pytest.approx(y.sum(), rel=1e-4)
+
+
+def test_e5_summary_reports_failure_fraction():
+    from cohortshift.recalibration import run_few_label_recalibration
+
+    ids, p, y = _e5_toy()
+    _, summary = run_few_label_recalibration(
+        ids, p, y, setting="t", seed=4, budgets=(10,), n_draws=3
+    )
+    assert "fraction_fit_failed" in summary and len(summary) == 2
+
+
+def test_repeated_split_table_has_no_patient_overlap_and_is_deterministic():
+    from cohortshift.source_experiments import repeated_split_table
+
+    samples = [f"P{i // 2:03d}_BA{i}" for i in range(80)]
+    labels = pd.Series([int(i % 4 == 0) for i in range(80)], index=samples)
+    patients = {s: s.split("_")[0] for s in samples}
+    first = repeated_split_table(labels, patients, seeds=[1, 2])
+    second = repeated_split_table(labels, patients, seeds=[1, 2])
+    pd.testing.assert_frame_equal(first, second)
+    for _, group in first.groupby("repeat"):
+        assert set(group["sample_id"]) == set(samples)
+        assert group.groupby("patient_id")["split"].nunique().max() == 1

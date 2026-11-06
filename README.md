@@ -355,6 +355,14 @@ evaluation function. Outputs are
 `results/tables/conformal_coverage.tsv`,
 `results/figures/reliability_target.png`, and
 `results/figures/coverage.png`.
+`make e5` runs the pre-registered few-label recalibration
+(`scripts/05_few_label.py`) on frozen source-trained E3 predictions and writes
+`results/tables/e5_few_label.tsv` (median/IQR summaries),
+`results/tables/e5_few_label_draws.tsv` (per-draw rows with drawn sample IDs),
+and `results/splits/e5_seeds.json`. `make e6` regenerates the E6a (AML,
+APL excluded) and E6b (earlier 585-sample source set) analysis sets with
+`scripts/01_prepare.py --analysis-set` and reruns E3/E4 on each, writing
+`_e6a`/`_e6b`-suffixed tables and figures.
 `make run` fails clearly if the expected input files have not been fetched and
 writes the inventory and analysis-set counts.
 The inventory reports each file's parsed header and inferred identifier
