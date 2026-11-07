@@ -156,9 +156,92 @@ def report(tables: Path) -> str:
         lines += ["", "The A0 recalibration-is-ill-posed warning was a pre-result "
                   "hypothesis; observed recalibrated A0 predictions did not remain at "
                   "the clip bounds. This exploratory observation does not establish generalizability."]
-    lines += ["\n### E7 (exploratory)", "",
-              "No E7 output table is available; E7 has not been reported. "
-              "The DNMT3A E3/E4 rows are not a substitute for E7."]
+    lines += [
+        "\n### E7 / secondary-label DNMT3A analysis (exploratory)",
+        "",
+        "E7 secondary-label cross-cohort results are stored in the E3/E4 "
+        "`e3_e4_cross_cohort*.tsv` tables (`outcome == DNMT3A`), not in a "
+        "separate E7 file. This descriptive summary is limited to the "
+        "preregistered primary no-adaptation setting (A0, logistic, no "
+        "calibrator); DNMT3A analyses are exploratory.",
+        "",
+    ]
+    dnmt3a_rows = []
+    for label, suffix in (("Main", ""), ("E6a", "_e6a"), ("E6b", "_e6b")):
+        frame = read_table(tables, f"e3_e4_cross_cohort{suffix}.tsv")
+        counts = read_table(tables, f"analysis_set{suffix}.tsv")
+        if frame is None:
+            continue
+        rows = select(
+            frame,
+            split_set="registered_main_split",
+            method="A0",
+            model="logistic",
+            calibrator="none",
+            outcome="DNMT3A",
+        )
+        if len(rows) != 1:
+            raise ValueError(f"{label} DNMT3A A0 primary row is missing or duplicated")
+        row = rows.iloc[0]
+        positives = "NA"
+        if counts is not None:
+            target_count = counts.loc[counts["cohort"] == "tcga_laml"]
+            if len(target_count) == 1:
+                positives = (
+                    f"{int(target_count.iloc[0]['dnmt3a_positives'])}/"
+                    f"{int(target_count.iloc[0]['dnmt3a_profiled_samples'] if 'dnmt3a_profiled_samples' in target_count else target_count.iloc[0]['n_samples'])}"
+                )
+        dnmt3a_rows.append([
+            label,
+            positives,
+            str(row["status"]),
+            interval(row, "target_auroc"),
+            interval(row, "target_brier"),
+            interval(row, "target_calibration_intercept"),
+            interval(row, "target_calibration_slope"),
+            (
+                f"{number(row['source_repeat_median_brier'])} "
+                f"[{number(row['source_repeat_q1_brier'])}, "
+                f"{number(row['source_repeat_q3_brier'])}]"
+            ),
+            (
+                f"{number(row['source_repeat_median_calibration_intercept'])} "
+                f"[{number(row['source_repeat_q1_calibration_intercept'])}, "
+                f"{number(row['source_repeat_q3_calibration_intercept'])}]"
+            ),
+            (
+                f"{number(row['source_repeat_median_calibration_slope'])} "
+                f"[{number(row['source_repeat_q1_calibration_slope'])}, "
+                f"{number(row['source_repeat_q3_calibration_slope'])}]"
+            ),
+            number(row["source_test_brier"]),
+            number(row["source_test_calibration_intercept"]),
+            number(row["source_test_calibration_slope"]),
+        ])
+    if dnmt3a_rows:
+        lines.append(rows_table(
+            [
+                "Analysis set", "Target DNMT3A positives/profiled", "Status",
+                "AUROC (target 95% CI)", "Brier (target 95% CI)",
+                "Intercept (target 95% CI)", "Slope (target 95% CI)",
+                "Source-repeat Brier median [Q1, Q3]",
+                "Source-repeat intercept median [Q1, Q3]",
+                "Source-repeat slope median [Q1, Q3]",
+                "Source main-split Brier",
+                "Source main-split intercept",
+                "Source main-split slope",
+            ],
+            dnmt3a_rows,
+        ))
+        lines += [
+            "",
+            "Source-repeat columns are the saved E3/E4 source-test summaries "
+            "over 20 repeats. Source main-split metrics are shown separately. Target "
+            "intervals are the existing patient-bootstrap intervals. This "
+            "table summarizes results only and does not add a confirmatory comparison.",
+        ]
+    else:
+        lines.append("DNMT3A cross-cohort result tables are unavailable.")
     coverage = read_table(tables, "conformal_coverage.tsv")
     lines += ["\n### Split conformal (exploratory)", ""]
     if coverage is None:

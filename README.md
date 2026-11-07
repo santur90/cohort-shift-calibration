@@ -431,9 +431,17 @@ The E2 source reference uses the saved source-only training runs; the setting-sp
 
 The A0 recalibration-is-ill-posed warning was a pre-result hypothesis; observed recalibrated A0 predictions did not remain at the clip bounds. This exploratory observation does not establish generalizability.
 
-### E7 (exploratory)
+### E7 / secondary-label DNMT3A analysis (exploratory)
 
-No E7 output table is available; E7 has not been reported. The DNMT3A E3/E4 rows are not a substitute for E7.
+E7 secondary-label cross-cohort results are stored in the E3/E4 `e3_e4_cross_cohort*.tsv` tables (`outcome == DNMT3A`), not in a separate E7 file. This descriptive summary is limited to the preregistered primary no-adaptation setting (A0, logistic, no calibrator); DNMT3A analyses are exploratory.
+
+| Analysis set | Target DNMT3A positives/profiled | Status | AUROC (target 95% CI) | Brier (target 95% CI) | Intercept (target 95% CI) | Slope (target 95% CI) | Source-repeat Brier median [Q1, Q3] | Source-repeat intercept median [Q1, Q3] | Source-repeat slope median [Q1, Q3] | Source main-split Brier | Source main-split intercept | Source main-split slope |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| Main | 43/173 | complete | 0.826 [0.733, 0.899] | 0.209 [0.156, 0.265] | 4.363 [3.668, 5.069] | 0.488 [0.314, 0.716] | 0.115 [0.108, 0.122] | 0.080 [-0.073, 0.302] | 0.843 [0.451, 1.266] | 0.180 | 1.710 | 0.300 |
+| E6a | 43/157 | complete | 0.787 [0.697, 0.867] | 0.190 [0.142, 0.241] | 1.188 [0.796, 1.551] | 1.364 [0.913, 1.975] | 0.116 [0.106, 0.152] | 0.765 [-0.043, 1.071] | 0.575 [0.456, 1.159] | 0.107 | -0.362 | 1.706 |
+| E6b | 43/173 | complete | 0.816 [0.730, 0.886] | 0.184 [0.139, 0.233] | 1.505 [1.131, 1.846] | 1.419 [0.990, 1.973] | 0.110 [0.098, 0.118] | 0.306 [-0.059, 1.287] | 0.682 [0.376, 0.914] | 0.154 | 0.744 | 1.774 |
+
+Source-repeat columns are the saved E3/E4 source-test summaries over 20 repeats. Source main-split metrics are shown separately. Target intervals are the existing patient-bootstrap intervals. This table summarizes results only and does not add a confirmatory comparison.
 
 ### Split conformal (exploratory)
 

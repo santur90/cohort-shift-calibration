@@ -14,7 +14,9 @@ def load_report():
 
 def test_missing_results_are_not_fabricated(tmp_path):
     text = load_report().report(tmp_path)
-    assert "E7 has not been reported" in text
+    assert "E7 / secondary-label DNMT3A analysis (exploratory)" in text
+    assert "not in a separate E7 file" in text
+    assert "DNMT3A cross-cohort result tables are unavailable." in text
     assert text.count("Results unavailable.") >= 5
 
 
