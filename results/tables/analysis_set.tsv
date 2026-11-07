@@ -1,0 +1,3 @@
+cohort	rna_matrix_samples	rna_and_mutation_profiled_candidates	n_samples	n_patients	npm1_profiled_samples	npm1_positives	dnmt3a_profiled_samples	dnmt3a_positives
+beat_aml	671	635	426	426	426	121	426	86
+tcga_laml	173	173	173	173	173	48	173	43

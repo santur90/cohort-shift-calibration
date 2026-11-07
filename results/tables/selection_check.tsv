@@ -1,0 +1,62 @@
+section	subset	stage	oncotree_code	gene	n	patients	positives	prevalence
+candidate_stage_counts	RNA_and_mutation_profiled	Initial Diagnosis			428	426		
+candidate_stage_counts	RNA_and_mutation_profiled	NA			11	11		
+candidate_stage_counts	RNA_and_mutation_profiled	Relapse			34	33		
+candidate_stage_counts	RNA_and_mutation_profiled	Remission			22	20		
+candidate_stage_counts	RNA_and_mutation_profiled	Residual			124	111		
+candidate_stage_counts	RNA_and_mutation_profiled	Unknown			16	16		
+fallback_patients	no_Initial_Diagnosis_candidate				159	159		
+selected_stage_counts	selected_analysis_set	Initial Diagnosis			426	426		
+selected_stage_counts	selected_analysis_set	NA			11	11		
+selected_stage_counts	selected_analysis_set	Relapse			21	21		
+selected_stage_counts	selected_analysis_set	Remission			15	15		
+selected_stage_counts	selected_analysis_set	Residual			96	96		
+selected_stage_counts	selected_analysis_set	Unknown			16	16		
+selected_oncotree_counts	selected_analysis_set		AML		568	568		
+selected_oncotree_counts	selected_analysis_set		ALAL		6	6		
+selected_oncotree_counts	selected_analysis_set		MBN		0	0		
+selected_oncotree_counts	selected_analysis_set		MDS		7	7		
+selected_oncotree_counts	selected_analysis_set		MDS/MPN		3	3		
+selected_oncotree_counts	selected_analysis_set		MPN		1	1		
+oncotree_by_selected_stage	selected_analysis_set	Initial Diagnosis	AML		421			
+oncotree_by_selected_stage	selected_analysis_set	NA	AML		0			
+oncotree_by_selected_stage	selected_analysis_set	Relapse	AML		21			
+oncotree_by_selected_stage	selected_analysis_set	Remission	AML		15			
+oncotree_by_selected_stage	selected_analysis_set	Residual	AML		95			
+oncotree_by_selected_stage	selected_analysis_set	Unknown	AML		16			
+oncotree_by_selected_stage	selected_analysis_set	Initial Diagnosis	ALAL		5			
+oncotree_by_selected_stage	selected_analysis_set	NA	ALAL		0			
+oncotree_by_selected_stage	selected_analysis_set	Relapse	ALAL		0			
+oncotree_by_selected_stage	selected_analysis_set	Remission	ALAL		0			
+oncotree_by_selected_stage	selected_analysis_set	Residual	ALAL		1			
+oncotree_by_selected_stage	selected_analysis_set	Unknown	ALAL		0			
+oncotree_by_selected_stage	selected_analysis_set	Initial Diagnosis	MBN		0			
+oncotree_by_selected_stage	selected_analysis_set	NA	MBN		0			
+oncotree_by_selected_stage	selected_analysis_set	Relapse	MBN		0			
+oncotree_by_selected_stage	selected_analysis_set	Remission	MBN		0			
+oncotree_by_selected_stage	selected_analysis_set	Residual	MBN		0			
+oncotree_by_selected_stage	selected_analysis_set	Unknown	MBN		0			
+oncotree_by_selected_stage	selected_analysis_set	Initial Diagnosis	MDS		0			
+oncotree_by_selected_stage	selected_analysis_set	NA	MDS		7			
+oncotree_by_selected_stage	selected_analysis_set	Relapse	MDS		0			
+oncotree_by_selected_stage	selected_analysis_set	Remission	MDS		0			
+oncotree_by_selected_stage	selected_analysis_set	Residual	MDS		0			
+oncotree_by_selected_stage	selected_analysis_set	Unknown	MDS		0			
+oncotree_by_selected_stage	selected_analysis_set	Initial Diagnosis	MDS/MPN		0			
+oncotree_by_selected_stage	selected_analysis_set	NA	MDS/MPN		3			
+oncotree_by_selected_stage	selected_analysis_set	Relapse	MDS/MPN		0			
+oncotree_by_selected_stage	selected_analysis_set	Remission	MDS/MPN		0			
+oncotree_by_selected_stage	selected_analysis_set	Residual	MDS/MPN		0			
+oncotree_by_selected_stage	selected_analysis_set	Unknown	MDS/MPN		0			
+oncotree_by_selected_stage	selected_analysis_set	Initial Diagnosis	MPN		0			
+oncotree_by_selected_stage	selected_analysis_set	NA	MPN		1			
+oncotree_by_selected_stage	selected_analysis_set	Relapse	MPN		0			
+oncotree_by_selected_stage	selected_analysis_set	Remission	MPN		0			
+oncotree_by_selected_stage	selected_analysis_set	Residual	MPN		0			
+oncotree_by_selected_stage	selected_analysis_set	Unknown	MPN		0			
+mutation_counts	all_selected			NPM1	585		152	0.25982905982905985
+mutation_counts	all_selected			DNMT3A	585		123	0.21025641025641026
+mutation_counts	initial_diagnosis			NPM1	426		121	0.284037558685446
+mutation_counts	initial_diagnosis			DNMT3A	426		86	0.20187793427230047
+mutation_counts	initial_diagnosis_AML			NPM1	421		121	0.28741092636579574
+mutation_counts	initial_diagnosis_AML			DNMT3A	421		86	0.2042755344418052
